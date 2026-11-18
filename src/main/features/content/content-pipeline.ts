@@ -13,8 +13,8 @@ function parseJson(text: string): unknown { return JSON.parse(text.trim().replac
 export function evidenceText(sources: SourceMaterial[]): string {
   return sources.map((source, index) => `[来源${index + 1}] ${source.title}\n链接：${source.url}\n${source.fetched ? '已读取网页正文' : '仅搜索摘要'}\n${source.text.slice(0, 9000)}`).join('\n\n')
 }
-export async function planContent(call: ModelCall, title: string, audience: string, platforms: Platform[], sources: SourceMaterial[]): Promise<ContentPlan> {
-  const raw = await call(`${systemRules} 共同策划，不要写成品。根据所提供资料提炼事实、待核事项和每个平台不同的读者入口与信息顺序；不要臆造证据。仅返回 JSON 对象：{"commonFacts":"事实及依据摘要","pending":["待核事项"],"platforms":{"小红书":"策划","公众号":"策划","抖音图文":"策划"}}。只需包含所选平台。`, `主题：${title}\n受众：${audience || '未指定'}\n平台：${platforms.join('、')}\n资料：\n${sources.length ? evidenceText(sources) : '本次没有联网资料，事实需待核实。'}`)
+export async function planContent(call: ModelCall, title: string, audience: string, platforms: Platform[], sources: SourceMaterial[], angle?: string): Promise<ContentPlan> {
+  const raw = await call(`${systemRules} 共同策划，不要写成品。根据所提供资料提炼事实、待核事项和每个平台不同的读者入口与信息顺序；不要臆造证据。仅返回 JSON 对象：{"commonFacts":"事实及依据摘要","pending":["待核事项"],"platforms":{"小红书":"策划","公众号":"策划","抖音图文":"策划"}}。只需包含所选平台。`, `主题：${title}\n受众：${audience || '未指定'}\n平台：${platforms.join('、')}\n创作角度：${angle || '未指定'}\n资料：\n${sources.length ? evidenceText(sources) : '本次没有联网资料，事实需待核实。'}`)
   const value = parseJson(raw)
   if (!value || typeof value !== 'object') throw new Error('plan invalid')
   const obj = value as Record<string, unknown>

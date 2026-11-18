@@ -35,7 +35,7 @@ async function safeToFetch(raw: string): Promise<boolean> {
     return records.length > 0 && records.every((record) => publicAddress(record.address, record.family))
   } catch { return false }
 }
-export async function researchTopic(topic: string): Promise<SourceMaterial[]> {
+export async function researchTopic(topic: string, onProgress?: (phase: 'search' | 'read', sources: SourceMaterial[]) => void): Promise<SourceMaterial[]> {
   const key = process.env.REVIEW_MODEL_API_KEY
   const url = process.env.MAGPIE_SEARCH_URL || 'http://127.0.0.1:3425/mcp/magpie/web-search'
   const endpoint = new URL(url)
@@ -46,6 +46,7 @@ export async function researchTopic(topic: string): Promise<SourceMaterial[]> {
     const found = await client.callTool({ name: 'web_search', arguments: { query: topic, count: 6, search_context_size: 'medium' } }, undefined, { timeout: 45000 })
     const sources = parseSearch(toolText(found), new Date().toISOString())
     if (!sources.length) throw new Error('no results')
+    onProgress?.('read', sources)
     for (const source of sources.slice(0, 3)) {
       if (!await safeToFetch(source.url)) continue
       try {
@@ -54,6 +55,7 @@ export async function researchTopic(topic: string): Promise<SourceMaterial[]> {
         if (text.trim().length >= 100) { source.text = text.slice(0, 9000); source.fetched = true }
       } catch { /* Retain the search excerpt and indicate it was not fetched. */ }
     }
+    onProgress?.('read', sources)
     return sources
   } finally { await client.close().catch(() => undefined) }
 }

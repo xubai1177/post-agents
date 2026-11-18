@@ -18,7 +18,7 @@ export async function generateContent(request: CreateRequest, config: { draftsDi
   const call = deps.createModel(config)
   progress('plan')
   let plan
-  try { plan = await planContent(call, request.title, request.audience, request.platforms, sources) } catch { throw new Error('内容策划失败，请重试。') }
+  try { plan = await planContent(call, request.title, request.audience, request.platforms, sources, request.angle) } catch { throw new Error('内容策划失败，请重试。') }
   progress('write')
   const result = await generateDrafts(config.draftsDirectory, request,
     (platform) => writeContent(call, request.title, request.audience, platform, plan, sources),

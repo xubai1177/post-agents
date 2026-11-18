@@ -4,7 +4,7 @@ export const platforms = ['小红书', '公众号', '抖音图文'] as const
 export type Platform = typeof platforms[number]
 export interface Draft { id: string; title: string; platforms: Platform[] }
 export interface Document { content: string; version: string }
-export interface CreateRequest { title: string; audience: string; platforms: Platform[]; research: 'online' | 'skip' }
+export interface CreateRequest { title: string; audience: string; angle?: string; platforms: Platform[]; research: 'online' | 'skip' }
 export interface CreateResult { draft: Draft | null; failures: { platform: Platform; error: string }[]; warnings?: string[] }
 export interface DraftsApi {
   list: () => Promise<Result<Draft[]>>

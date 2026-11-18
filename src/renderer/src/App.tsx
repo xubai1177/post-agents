@@ -1,16 +1,21 @@
 import { useEffect, useState } from 'react'
-import type { Draft, Platform, CreateRequest, CreateResult } from '../../shared/drafts'
+import { platforms, type Draft, type Platform, type CreateRequest, type CreateResult } from '../../shared/drafts'
 import type { GenerationProgress } from '../../shared/research'
 import { Icon } from './components/Icon'
-import { Create } from './features/Create'
+import { Create, type CreateForm } from './features/Create'
+import { Topics } from './features/Topics'
+import type { TopicCandidate, TopicBatch } from '../../shared/topics'
 import { Detail } from './features/Detail'
 import { Settings } from './features/Settings'
 import type { OpenDocument } from './features/types'
 
-type Page = 'create' | 'detail' | 'settings'
+type Page = 'create' | 'detail' | 'settings' | 'topics'
 function BrandMark() { return <div className="brand-mark"><span /><span /><span /><span /></div> }
 
 export default function App() {
+  const [createForm, setCreateForm] = useState<CreateForm>({ title: '', angle: '', audience: '', platforms: [...platforms] })
+  const [createDirty, setCreateDirty] = useState(false)
+  const [topicStatus, setTopicStatus] = useState('')
   const [page, setPage] = useState<Page>('detail')
   const [drafts, setDrafts] = useState<Draft[]>([])
   const [selectedId, setSelectedId] = useState('')
@@ -62,7 +67,7 @@ export default function App() {
       const result = await window.draftsApi.generate(request)
       if (!result.ok) { setStatus(result.error); setResearchFailed(result.code === 'RESEARCH_UNAVAILABLE'); return null }
       await refresh(result.value.draft?.id)
-      if (result.value.draft) { setSelectedId(result.value.draft.id); setSelectedPlatform(result.value.draft.platforms[0]); setPage('detail') }
+      if (result.value.draft) { setCreateDirty(false); setSelectedId(result.value.draft.id); setSelectedPlatform(result.value.draft.platforms[0]); setPage('detail') }
       const notes = [...(result.value.failures.length ? [`以下平台生成或保存失败：${result.value.failures.map((item) => item.platform).join('、')}。`] : ['文案已生成并保存，请人工核查事实后使用。']), ...(result.value.warnings ?? [])]
       setStatus(notes.join(' '))
       return result.value
@@ -93,11 +98,18 @@ export default function App() {
     if (dirty && !window.confirm('还有未保存的修改。更换草稿目录时这些修改会丢失，是否继续打开设置？')) return
     setStatus(''); setPage('settings')
   }
+  function chooseTopic(candidate: TopicCandidate, batch: TopicBatch) {
+    if (busy) return
+    if (createDirty && !window.confirm('选择新选题将替换当前创作表单中的主题、角度、受众和平台，是否继续？')) return
+    setCreateForm({ title: candidate.title, angle: candidate.angle, audience: batch.request.audience, platforms: [...batch.request.platforms], reference: { skipped: batch.skipped, sources: batch.sources } })
+    setCreateDirty(false); setResearchFailed(false); setStatus(''); setPage('create')
+  }
   const busy = editorBusy || operationBusy
-  return <div className="app-shell notes-shell"><aside className="notes-sidebar"><div className="notes-brand"><BrandMark /><div><strong>Post Agents</strong><span>内容创作工作台</span></div></div><div className="notes-list-header"><span>内容</span><button type="button" aria-label="新建内容" title="新建内容" disabled={busy} onClick={() => { setStatus(''); setPage('create') }}><Icon name="plus" size={18}/></button></div><nav className="notes-list" aria-label="内容主题">{drafts.map((draft) => <button type="button" key={draft.id} disabled={busy} className={`note-item ${page === 'detail' && selectedId === draft.id ? 'active' : ''}`} onClick={() => openDraft(draft)} aria-current={page === 'detail' && selectedId === draft.id ? 'page' : undefined}><Icon name="file" size={16}/><span title={draft.title}>{draft.title}</span></button>)}</nav><div className="notes-sidebar-bottom"><button type="button" disabled={busy} className={`notes-settings ${page === 'settings' ? 'active' : ''}`} onClick={openSettings}><Icon name="settings" size={18}/> 设置</button><div className="notes-demo"><span className="status-dot"/> 本地工作区</div></div></aside>
-    <div className="notes-main"><header className="notes-topbar"><span>{page === 'detail' ? selectedDraft?.title ?? '内容工作区' : page === 'create' ? '新建内容' : '设置'}</span><span className="demo-pill"><span/>本地草稿</span></header><main className={`notes-content ${page === 'detail' ? 'notes-content-detail' : ''}`}>
+  return <div className="app-shell notes-shell"><aside className="notes-sidebar"><div className="notes-brand"><BrandMark /><div><strong>Post Agents</strong><span>内容创作工作台</span></div></div><div className="notes-list-header"><span>内容</span><button type="button" aria-label="新建内容" title="新建内容" disabled={busy} onClick={() => { setStatus(''); setPage('create') }}><Icon name="plus" size={18}/></button></div><button type="button" disabled={busy} className={`note-item ${page === 'topics' ? 'active' : ''}`} onClick={() => { setStatus(''); setPage('topics') }}><Icon name="spark" size={16}/> 选题 {topicStatus && <small>{topicStatus}</small>}</button><nav className="notes-list" aria-label="内容主题">{drafts.map((draft) => <button type="button" key={draft.id} disabled={busy} className={`note-item ${page === 'detail' && selectedId === draft.id ? 'active' : ''}`} onClick={() => openDraft(draft)} aria-current={page === 'detail' && selectedId === draft.id ? 'page' : undefined}><Icon name="file" size={16}/><span title={draft.title}>{draft.title}</span></button>)}</nav><div className="notes-sidebar-bottom"><button type="button" disabled={busy} className={`notes-settings ${page === 'settings' ? 'active' : ''}`} onClick={openSettings}><Icon name="settings" size={18}/> 设置</button><div className="notes-demo"><span className="status-dot"/> 本地工作区</div></div></aside>
+    <div className="notes-main"><header className="notes-topbar"><span>{page === 'detail' ? selectedDraft?.title ?? '内容工作区' : page === 'create' ? '新建内容' : page === 'topics' ? '选题' : '设置'}</span><span className="demo-pill"><span/>本地草稿</span></header><main className={`notes-content ${page === 'detail' ? 'notes-content-detail' : ''}`}>
     {status && <div className="app-status" role="status">{status}</div>}
-    {page === 'create' && <Create onBack={() => setPage('detail')} onCreate={createDraft} busy={operationBusy} researchFailed={researchFailed} progress={progress} />}
+    {page === 'create' && <Create form={createForm} onChange={(form) => { setCreateForm(form); setCreateDirty(true) }} onBack={() => setPage(createForm.reference ? 'topics' : 'detail')} onCreate={createDraft} busy={operationBusy} researchFailed={researchFailed} progress={progress} />}
+    <div hidden={page !== 'topics'}><Topics onChoose={chooseTopic} onStatus={setTopicStatus} /></div>
     {page === 'detail' && (loading ? <div className="empty-state">正在读取草稿…</div> : selectedDraft && current ? <Detail key={editorVersion} draft={selectedDraft} selectedPlatform={selectedPlatform} onPlatform={setSelectedPlatform} document={current} editorBusy={busy} onBusyChange={setEditorBusy} onSave={saveCurrent} onReload={reloadCurrent} onImageBusy={setOperationBusy} onDocumentChange={(value) => setDocuments((all) => ({ ...all, [docKey]: { ...all[docKey], content: value } }))} /> : <div className="empty-state">{selectedDraft ? '正在读取文案…' : '还没有草稿。请在设置中选择草稿目录，或新建内容。'}</div>)}
     {page === 'settings' && <Settings onSaved={(directoryChanged) => { if (directoryChanged) setDocuments({}); void refresh() }} />}
     </main></div></div>

@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { SettingsApi } from '../shared/settings'
 import type { DraftsApi } from '../shared/drafts'
 import type { GenerationProgress } from '../shared/research'
+import type { TopicsApi, TopicEvent } from '../shared/topics'
 import type { ImagesApi } from '../shared/images'
 
 const settings: SettingsApi = {
@@ -31,3 +32,15 @@ const images: ImagesApi = {
   generate: (request) => ipcRenderer.invoke('images:generate', request)
 }
 contextBridge.exposeInMainWorld('imagesApi', images)
+
+const topics: TopicsApi = {
+  start: (runId, request) => ipcRenderer.invoke('topics:start', runId, request),
+  resume: (runId, mode) => ipcRenderer.invoke('topics:resume', runId, mode),
+  openSource: (url) => ipcRenderer.invoke('topics:open-source', url),
+  onProgress: (callback) => {
+    const handler = (_event: Electron.IpcRendererEvent, update: TopicEvent) => callback(update)
+    ipcRenderer.on('topics:progress', handler)
+    return () => ipcRenderer.removeListener('topics:progress', handler)
+  }
+}
+contextBridge.exposeInMainWorld('topicsApi', topics)

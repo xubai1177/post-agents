@@ -193,3 +193,52 @@ test('配图生成运行期间拒绝同一平台的重复请求，结束后允�
   await first
   await assert.doesNotReject(generateImageSet(request, deps))
 })
+
+test('选题流程报告真实来源，过滤无效来源和重复候选并保留输入', async () => {
+  const { generateTopics } = await import('../src/main/features/topics/topic-service')
+  const source = { title: '来源', url: 'https://example.com/a', retrievedAt: '2026-11-18', fetched: false, text: '资料摘要' }
+  const phases: string[] = []
+  const request = { direction: '社保', audience: '离职者', platforms: ['公众号', '小红书'] as ('公众号' | '小红书')[] }
+  const result = await generateTopics(request, false, 'run1', (event) => phases.push(event.phase), {
+    research: async (_query, progress) => { progress?.('read', [source]); return [source] },
+    call: async (_system, input) => {
+      assert.match(input, /资料摘要/)
+      return JSON.stringify([
+        { title: '如何查询', angle: '查询方法', reason: '方便读者', platforms: ['小红书', '无效'], sourceIndexes: [1, 2, 1], pending: ['核查入口'] },
+        { title: '如何查询！', angle: '重复', reason: '重复' },
+        { title: '无角度', angle: '', reason: '无效' }
+      ])
+    }
+  })
+  assert.equal(result.status, 'completed')
+  if (result.status !== 'completed') return
+  assert.deepEqual(phases, ['search', 'read', 'generate', 'organize'])
+  assert.deepEqual(result.batch.request.platforms, ['公众号', '小红书'])
+  assert.deepEqual(result.batch.candidates[0].platforms, ['小红书'])
+  assert.deepEqual(result.batch.candidates[0].sourceIndexes, [1])
+  assert.equal(result.batch.candidates.length, 1)
+  assert.ok(result.warning)
+})
+
+test('选题搜索失败可选择跳过并生成，空结果不视为成功', async () => {
+  const { generateTopics } = await import('../src/main/features/topics/topic-service')
+  const request = { direction: '社保', audience: '', platforms: ['小红书' as const] }
+  let calls = 0
+  const deps = { research: async () => { throw new Error('offline') }, call: async () => { calls++; return JSON.stringify([{ title: '主题', angle: '角度', reason: '理由', sourceIndexes: [1] }]) } }
+  const failed = await generateTopics(request, false, 'r1', () => {}, deps)
+  assert.equal(failed.status, 'research_failed'); assert.equal(calls, 0)
+  const skipped = await generateTopics(request, true, 'r1', () => {}, deps)
+  assert.equal(skipped.status, 'completed')
+  if (skipped.status === 'completed') { assert.equal(skipped.batch.skipped, true); assert.deepEqual(skipped.batch.candidates[0].sourceIndexes, []) }
+  await assert.rejects(generateTopics(request, true, 'r2', () => {}, { ...deps, call: async () => '[]' }))
+})
+
+test('创作策划接收选题角度，旧请求仍可不传角度', async () => {
+  const { planContent } = await import('../src/main/features/content/content-pipeline')
+  const inputs: string[] = []
+  const call = async (_system: string, user: string) => { inputs.push(user); return JSON.stringify({ commonFacts: '', pending: [], platforms: { 小红书: '计划' } }) }
+  await planContent(call, '主题', '', ['小红书'], [], '从查询入手')
+  await planContent(call, '主题', '', ['小红书'], [])
+  assert.match(inputs[0], /创作角度：从查询入手/)
+  assert.match(inputs[1], /创作角度：未指定/)
+})

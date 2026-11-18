@@ -2,6 +2,7 @@ import { app, BrowserWindow } from 'electron'
 import { join } from 'node:path'
 import { registerSettings } from './ipc/settings-ipc'
 import { registerDrafts } from './ipc/drafts-ipc'
+import { registerTopics } from './ipc/topics-ipc'
 import { registerImages } from './ipc/images-ipc'
 import { loadEnvFile } from 'node:process'
 
@@ -39,6 +40,7 @@ app.whenReady().then(() => {
   registerSettings()
   registerDrafts()
   registerImages()
+  registerTopics()
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

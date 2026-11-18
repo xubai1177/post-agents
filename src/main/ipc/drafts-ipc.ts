@@ -12,7 +12,7 @@ function isPlatform(value: unknown): value is Platform { return typeof value ===
 function validateRequest(value: unknown): value is CreateRequest {
   if (!value || typeof value !== 'object') return false
   const r = value as Record<string, unknown>
-  return (r.research === 'online' || r.research === 'skip') && typeof r.title === 'string' && !!r.title.trim() && r.title.length <= 100 && typeof r.audience === 'string' && r.audience.length <= 500 && Array.isArray(r.platforms) && r.platforms.length > 0 && r.platforms.length <= platforms.length && r.platforms.every(isPlatform) && new Set(r.platforms).size === r.platforms.length
+  return (r.research === 'online' || r.research === 'skip') && typeof r.title === 'string' && !!r.title.trim() && r.title.length <= 100 && typeof r.audience === 'string' && r.audience.length <= 500 && (r.angle === undefined || (typeof r.angle === 'string' && r.angle.length <= 2000)) && Array.isArray(r.platforms) && r.platforms.length > 0 && r.platforms.length <= platforms.length && r.platforms.every(isPlatform) && new Set(r.platforms).size === r.platforms.length
 }
 function safeMessage(error: unknown): string {
   if (error instanceof Error && ['请先在设置中选择草稿目录。', '请先在设置中配置模型地址、模型名称和密钥。', '已有同名主题，请更换主题名称。', '主题不能作为文件夹名称。', '文件已被外部修改，请重新打开后再保存。', '草稿不存在或路径无效。', '草稿文件无效。', '文案内容无效。', '联网核查不可用或没有找到来源，请重试或选择继续生成未核查草稿。', '内容策划失败，请重试。'].includes(error.message)) return error.message
