@@ -1,0 +1,24 @@
+appId: com.linggao.desktop
+productName: 灵稿 AI
+artifactName: linggao-ai-${version}-${os}-${arch}.${ext}
+directories:
+  output: dist
+files:
+  - out/**
+  - src/renderer/public/icon.png
+  - package.json
+  - '!**/.env*'
+asar: true
+mac:
+  icon: src/renderer/public/icon.png
+  identity: null
+  target:
+    - dmg
+    - zip
+win:
+  icon: src/renderer/public/icon.png
+  target:
+    - nsis
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true

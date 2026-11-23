@@ -4,7 +4,13 @@ import { registerSettings } from './ipc/settings-ipc'
 import { registerDrafts } from './ipc/drafts-ipc'
 import { registerTopics } from './ipc/topics-ipc'
 import { registerImages } from './ipc/images-ipc'
+import { registerWorkspace } from './ipc/workspace-ipc'
 import { loadEnvFile } from 'node:process'
+
+// 保留原有数据目录，改名后仍可读取现有设置。
+const existingUserDataPath = join(app.getPath('appData'), 'post-agents-app')
+app.setName('灵稿 AI')
+app.setPath('userData', existingUserDataPath)
 
 function createWindow(): void {
   const window = new BrowserWindow({
@@ -14,6 +20,8 @@ function createWindow(): void {
     minHeight: 600,
     show: false,
     backgroundColor: '#f8fafc',
+    title: '灵稿 AI',
+    icon: join(app.getAppPath(), 'src/renderer/public/icon.png'),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -37,9 +45,11 @@ try { loadEnvFile(join(app.getAppPath(), '.env')) } catch (error) {
 }
 
 app.whenReady().then(() => {
+  if (process.platform === 'darwin') app.dock?.setIcon(join(app.getAppPath(), 'src/renderer/public/icon.png'))
   registerSettings()
   registerDrafts()
   registerImages()
+  registerWorkspace()
   registerTopics()
   createWindow()
   app.on('activate', () => {

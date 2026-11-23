@@ -8,3 +8,5 @@ drafts/
 .env
 .env.*
 !.env.example
+.workbuddy/
+generated_images/

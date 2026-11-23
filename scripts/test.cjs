@@ -6,7 +6,7 @@ const { spawnSync } = require('node:child_process')
 const dir = mkdtempSync(join(tmpdir(), 'post-agents-tests-'))
 try {
   const output = join(dir, 'drafts.test.cjs')
-  buildSync({ entryPoints: ['tests/drafts.test.ts'], bundle: true, platform: 'node', format: 'cjs', outfile: output, logLevel: 'silent' })
+  buildSync({ entryPoints: ['tests/drafts.test.ts'], bundle: true, tsconfig: 'tsconfig.web.json', platform: 'node', format: 'cjs', jsx: 'automatic', outfile: output, logLevel: 'silent' })
   const result = spawnSync(process.execPath, ['--test', output], { stdio: 'inherit' })
   if (result.error) throw result.error
   process.exitCode = result.status ?? 1

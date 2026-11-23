@@ -1,63 +1,33 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import { lookup } from 'node:dns/promises'
-import { isIP } from 'node:net'
 import { constants } from 'node:fs'
-import { lstat, open, writeFile } from 'node:fs/promises'
+import { lstat, open, writeFile, rename, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import { publicAddress } from '../../infrastructure/public-network'
+import { randomUUID } from 'node:crypto'
+import type { Platform } from '../../../shared/drafts'
+import { researchWithModel } from '../../infrastructure/model-search'
 import type { ResearchRecord, ResearchSource } from '../../../shared/research'
 
-export interface SourceMaterial extends ResearchSource { text: string }
-export function parseSearch(text: string, time: string): SourceMaterial[] {
-  const matches = [...text.matchAll(/(?:^|\n)\s*\d+\.\s+([^\n]{1,400}?)\s+[—–-]\s+(https?:\/\/[^\s<>]+)([^]*?)(?=\n\s*\d+\.\s+[^\n]+?\s+[—–-]\s+https?:\/\/|$)/g)]
-  const seen = new Set<string>()
-  return matches.flatMap((match) => {
-    try {
-      const url = new URL(match[2].replace(/[，。),]+$/, ''))
-      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || seen.has(url.href)) return []
-      seen.add(url.href)
-      return [{ title: match[1].trim().slice(0, 300), url: url.href, retrievedAt: time, fetched: false, text: match[3].trim().slice(0, 3000) }]
-    } catch { return [] }
-  }).sort((a, b) => Number(/(?:\.gov\.cn|\.gov|\.edu\.cn|\.edu)(?:\/|$)/i.test(b.url)) - Number(/(?:\.gov\.cn|\.gov|\.edu\.cn|\.edu)(?:\/|$)/i.test(a.url))).slice(0, 5)
-}
-function toolText(result: unknown): string {
-  if (!result || typeof result !== 'object' || !('content' in result) || !Array.isArray(result.content) || ('isError' in result && result.isError)) throw new Error('search failed')
-  const text = result.content.flatMap((item: unknown) => item && typeof item === 'object' && 'type' in item && item.type === 'text' && 'text' in item && typeof item.text === 'string' ? [item.text] : []).join('\n')
-  if (!text.trim()) throw new Error('empty search')
-  return text
-}
-async function safeToFetch(raw: string): Promise<boolean> {
+export interface SourceMaterial extends ResearchSource { text: string; searchSummary?: string }
+export type SearchConfig = { apiUrl: string; model: string; apiKey: string }
+export async function researchTopic(config: SearchConfig, topic: string, onProgress?: (phase: 'search' | 'read', sources: SourceMaterial[]) => void, search: typeof researchWithModel = researchWithModel, mode: 'topic' | 'article' = 'topic'): Promise<SourceMaterial[]> {
+  const sources = await search(config, topic)
+  onProgress?.('read', sources)
+  const summary = sources.find(source => source.searchSummary)?.searchSummary
+  if (!summary) return sources
+  // A provider without per-claim citations needs a separate, date-aware search.
+  // Both outputs remain model summaries and must not be presented as page text.
+  const date = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
   try {
-    const url = new URL(raw); const host = url.hostname.replace(/^\[|\]$/g, '')
-    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || isIP(host) || host === 'localhost' || host.endsWith('.local')) return false
-    const records = await lookup(host, { all: true })
-    return records.length > 0 && records.every((record) => publicAddress(record.address, record.family))
-  } catch { return false }
-}
-export async function researchTopic(topic: string, onProgress?: (phase: 'search' | 'read', sources: SourceMaterial[]) => void): Promise<SourceMaterial[]> {
-  const key = process.env.REVIEW_MODEL_API_KEY
-  const url = process.env.MAGPIE_SEARCH_URL || 'http://127.0.0.1:3425/mcp/magpie/web-search'
-  const endpoint = new URL(url)
-  if (!['127.0.0.1', 'localhost', '[::1]'].includes(endpoint.hostname) || endpoint.protocol !== 'http:' || endpoint.username || endpoint.password) throw new Error('invalid search endpoint')
-  const client = new Client({ name: 'post-agents', version: '0.1.0' })
-  try {
-    await client.connect(new StreamableHTTPClientTransport(endpoint, { requestInit: { headers: key ? { authorization: `Bearer ${key}` } : {} } }), { timeout: 15000 })
-    const found = await client.callTool({ name: 'web_search', arguments: { query: topic, count: 6, search_context_size: 'medium' } }, undefined, { timeout: 45000 })
-    const sources = parseSearch(toolText(found), new Date().toISOString())
-    if (!sources.length) throw new Error('no results')
-    onProgress?.('read', sources)
-    for (const source of sources.slice(0, 3)) {
-      if (!await safeToFetch(source.url)) continue
-      try {
-        const page = await client.callTool({ name: 'web_fetch', arguments: { url: source.url, max_chars: 9000 } }, undefined, { timeout: 25000 })
-        const text = toolText(page)
-        if (text.trim().length >= 100) { source.text = text.slice(0, 9000); source.fetched = true }
-      } catch { /* Retain the search excerpt and indicate it was not fetched. */ }
-    }
-    onProgress?.('read', sources)
+    const checks = await search(config, mode === 'article' ? `核对以下创作任务的联网摘要，检查来源是否支持结论，并根据主题核对时效和适用范围；涉及政策时核对年度、地区、对象和各办理阶段，区分本期与往期。无法确认的标记待核。任务：${topic}\n待核摘要：${summary.slice(0, 8000)}` : `核对主题“${topic}”的检索摘要。今天是${date}。请优先查阅官方原始公告，逐项检查具体年份、适用周期、对象、金额、办理及截止日期，区分本期与往期，不要将上一期领取期限套用本期；将不确定和冲突明确标出。为每个具体结论给出原文链接及对应原文内容，不能确认就标记未核实。待核摘要：${summary.slice(0, 8000)}`)
+    const existing = new Set(sources.map(source => source.url))
+    const added = checks.filter(source => !existing.has(source.url)).slice(0, Math.max(0, 10 - sources.length))
+    const checkSummary = checks.find(source => source.searchSummary)?.searchSummary
+    const checkText = checkSummary || checks.filter(source => source.text).map(source => `${source.title} ${source.url}：${source.text}`).join('\n')
+    if (checkText) sources[0] = { ...sources[0], searchSummary: `【针对原摘要的独立联网复核，仍为模型整理，须核对来源】\n${checkText}\n\n【原始联网综合摘要，可能存在错误或跨期混用】\n${summary}` }
+    return [...sources, ...added.map(source => ({ ...source, searchSummary: undefined }))]
+  } catch {
+    sources[0] = { ...sources[0], searchSummary: `【独立联网复核未完成，以下摘要需逐项核查】\n${summary}` }
     return sources
-  } finally { await client.close().catch(() => undefined) }
+  }
 }
 function validId(id: string): boolean { return !!id && id !== '.' && id !== '..' && !id.includes('/') && !id.includes('\\') && !id.includes('\0') }
 async function recordPath(root: string, id: string): Promise<string> {
@@ -72,7 +42,7 @@ export async function readResearch(root: string, id: string): Promise<ResearchRe
     const path = await recordPath(root, id)
     const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
     try {
-      const stat = await handle.stat(); if (!stat.isFile() || stat.size > 100000) throw new Error('invalid research')
+      const stat = await handle.stat(); if (!stat.isFile() || stat.size > 400000) throw new Error('invalid research')
       const value: unknown = JSON.parse(await handle.readFile('utf8'))
       if (!value || typeof value !== 'object') throw new Error('invalid research')
       const r = value as ResearchRecord
@@ -80,4 +50,32 @@ export async function readResearch(root: string, id: string): Promise<ResearchRe
       return { version: 1, status: r.status, checkedAt: r.checkedAt, sources: r.sources.filter((s) => s && typeof s.title === 'string' && typeof s.url === 'string' && typeof s.retrievedAt === 'string' && typeof s.fetched === 'boolean').slice(0, 10), pending: r.pending.filter((s) => typeof s === 'string').slice(0, 20), warnings: r.warnings.filter((s) => typeof s === 'string').slice(0, 20) }
     } finally { await handle.close() }
   } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error }
+}
+
+const platformFiles: Record<Platform, string> = { 小红书: '.research-xiaohongshu.json', 公众号: '.research-wechat.json', 抖音图文: '.research-douyin.json' }
+export async function savePlatformResearch(root: string, id: string, platform: Platform, data: ResearchRecord): Promise<void> {
+  const base = await recordPath(root, id)
+  const path = join(base.slice(0, -'.research.json'.length), platformFiles[platform])
+  const temporary = `${path}.${randomUUID()}.tmp`
+  try { await writeFile(temporary, JSON.stringify(data, null, 2), { flag: 'wx', mode: 0o600 }); await rename(temporary, path) }
+  finally { await rm(temporary, { force: true }) }
+}
+export async function readPlatformResearch(root: string, id: string, platform: Platform): Promise<ResearchRecord | null> {
+  const base = await recordPath(root, id)
+  const path = join(base.slice(0, -'.research.json'.length), platformFiles[platform])
+  try {
+    const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
+    try {
+      const stat = await handle.stat(); if (!stat.isFile() || stat.size > 400000) throw new Error('invalid research')
+      const value: unknown = JSON.parse(await handle.readFile('utf8'))
+      if (!value || typeof value !== 'object') throw new Error('invalid research')
+      const r = value as ResearchRecord
+      if (r.version !== 1 || !['sources_found', 'skipped'].includes(r.status) || typeof r.checkedAt !== 'string' || !Array.isArray(r.sources) || !Array.isArray(r.pending) || !Array.isArray(r.warnings) || typeof r.articleVersion !== 'string' || (r.searchPlan !== undefined && typeof r.searchPlan !== 'string')) throw new Error('invalid research')
+      return { ...r, sources: r.sources.filter(s => s && typeof s.title === 'string' && typeof s.url === 'string' && typeof s.retrievedAt === 'string' && typeof s.fetched === 'boolean').slice(0, 10), pending: r.pending.filter(s => typeof s === 'string').slice(0, 20), warnings: r.warnings.filter(s => typeof s === 'string').slice(0, 20) }
+    } finally { await handle.close() }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    const legacy = await readResearch(root, id)
+    return legacy ? { ...legacy, legacy: true } : null
+  }
 }

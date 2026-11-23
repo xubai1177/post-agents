@@ -1,12 +1,21 @@
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { useRef } from 'react'
 import type { Draft, Platform } from '../../../shared/drafts'
+import type { ImageStyle } from '../../../shared/image-styles'
 import type { OpenDocument } from './types'
-import { Icon } from '../components/Icon'
 import { VisualEditor } from './VisualEditor'
 import { ResearchPanel } from './ResearchPanel'
+import { Icon } from '../components/Icon'
 import { ImageGallery } from './ImageGallery'
+import { TitleGenerator } from './TitleGenerator'
 
-export function Detail({ draft, selectedPlatform, onPlatform, document, editorBusy, onBusyChange, onSave, onReload, onImageBusy, onDocumentChange }: { draft: Draft; selectedPlatform: Platform; onPlatform: (p: Platform) => void; document: OpenDocument; editorBusy: boolean; onBusyChange: (busy: boolean) => void; onSave: () => void; onReload: () => void; onImageBusy: (busy: boolean) => void; onDocumentChange: (value: string) => void }) {
+export function Detail({ platformTitle, onPlatformTitleChange, draft, selectedPlatform, document, editorBusy, onImageBusy, onDocumentChange, onRegenerate, regenerating, imageStyle, onStyleSave }: { platformTitle: string | null; onPlatformTitleChange: (value: string) => void; draft: Draft; selectedPlatform: Platform; document: OpenDocument; editorBusy: boolean; onImageBusy: (busy: boolean) => void; imageStyle: ImageStyle; onStyleSave: (style: ImageStyle) => Promise<string | null>; onDocumentChange: (value: string) => void; onRegenerate: () => void; regenerating: boolean }) {
+  const toolsRef = useRef<HTMLElement>(null)
   const key = `${draft.id}:${selectedPlatform}`
-  return <div className="note-detail"><div className="note-heading"><div className="eyebrow"><span/> 内容草稿</div><h1>{draft.title}</h1><p>本地草稿 · 文案需自行核查事实与来源</p></div><div className="note-tabs" role="group" aria-label="平台版本">{draft.platforms.map((platform) => <button type="button" key={platform} disabled={editorBusy} aria-pressed={selectedPlatform === platform} className={selectedPlatform === platform ? 'active' : ''} onClick={() => onPlatform(platform)}>{platform}</button>)}</div>
-  <div className="detail-columns"><div className="detail-content"><section className="note-document" aria-label={`${selectedPlatform}文案`}><div className="note-document-toolbar"><div><strong>发布文案</strong><span>{document.content === document.savedContent ? '已保存' : '未保存'}</span></div><div className="document-actions"><button type="button" className="reload-button" disabled={editorBusy} onClick={onReload}>重新读取</button><button type="button" className="primary-button" disabled={editorBusy || document.content === document.savedContent} onClick={onSave}>保存</button></div></div><div className="document-notice"><Icon name="spark" size={15}/> 编辑可能调整文案格式；生成结果需人工核查事实与来源。</div><VisualEditor key={key} initialMarkdown={document.content} onBusyChange={onBusyChange} onChange={onDocumentChange} /></section><ResearchPanel key={draft.id} draftId={draft.id} /></div><ImageGallery key={key} draft={draft} platform={selectedPlatform} document={document} busy={editorBusy} onBusy={onImageBusy} /></div></div>
+  return <div className="note-detail">
+    <div className="note-heading studio-hero article-platform-heading"><TitleGenerator key={key} draft={draft} platform={selectedPlatform} title={platformTitle} document={document} busy={editorBusy} onBusy={onImageBusy} onApply={onPlatformTitleChange}/><h1><Input appearance="embedded" className="article-title-input" aria-label={`${selectedPlatform}文章标题`} placeholder="输入文章标题" maxLength={500} value={platformTitle ?? ''} disabled={editorBusy || platformTitle === null} onChange={event => onPlatformTitleChange(event.target.value)} /></h1></div>
+    <div className="detail-columns"><div className="detail-content"><Card asChild><section className="note-document" aria-label={`${selectedPlatform}文案`}><div className="note-document-toolbar"><div className="document-actions"><Button type="button" variant="secondary" className="article-optimize-trigger" disabled={editorBusy} onClick={onRegenerate}><Icon name="spark" size={15}/>{regenerating ? '生成中…' : '重新生成'}</Button></div></div><VisualEditor key={key} initialMarkdown={document.content} onBusyChange={onImageBusy} onChange={onDocumentChange} disabled={editorBusy}/></section></Card></div><aside className="article-tools" ref={toolsRef} tabIndex={-1} aria-label="文章配图和核查"><ImageGallery key={key} draft={draft} platform={selectedPlatform} document={document} busy={editorBusy} imageStyle={imageStyle} onStyleSave={onStyleSave} /><ResearchPanel key={`${key}:${document.version}`} draftId={draft.id} platform={selectedPlatform} /></aside></div>
+  </div>
 }
