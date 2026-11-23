@@ -1019,7 +1019,7 @@ test('新文章先创建并入队，最多三篇并行，切换页面不影响�
   releases.shift()!(); await waitFor(() => releases.length === 3)
   while (releases.length) releases.shift()!()
   await waitFor(() => active === 0)
-  await waitFor(() => !queue.isActive(root, '任务3'))
+  for (let i = 0; i < 200 && (await queue.load(root)).filter(run => run.status === 'done').length < 4; i++) await new Promise(resolve => setTimeout(resolve, 5))
   assert.equal((await queue.load(root)).filter(run => run.status === 'done').length, 4)
 }))
 
