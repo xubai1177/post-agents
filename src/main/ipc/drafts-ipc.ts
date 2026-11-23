@@ -24,11 +24,11 @@ function isPlatform(value: unknown): value is Platform { return typeof value ===
 function validateRequest(value: unknown): value is CreateRequest {
   if (!value || typeof value !== 'object') return false
   const r = value as Record<string, unknown>
-  return (r.research === 'online' || r.research === 'skip') && typeof r.title === 'string' && !!r.title.trim() && r.title.length <= 100 && typeof r.audience === 'string' && r.audience.length <= 500 && (r.angle === undefined || (typeof r.angle === 'string' && r.angle.length <= 2000)) && (r.instruction === undefined || (typeof r.instruction === 'string' && r.instruction.length <= 2000)) && Array.isArray(r.platforms) && r.platforms.length > 0 && r.platforms.length <= platforms.length && r.platforms.every(isPlatform) && new Set(r.platforms).size === r.platforms.length
+  return (r.research === 'online' || r.research === 'skip') && typeof r.title === 'string' && !!r.title.trim() && r.title.length <= 100 && typeof r.audience === 'string' && r.audience.length <= 500 && (r.angle === undefined || (typeof r.angle === 'string' && r.angle.length <= 2000)) && Array.isArray(r.platforms) && r.platforms.length > 0 && r.platforms.length <= platforms.length && r.platforms.every(isPlatform) && new Set(r.platforms).size === r.platforms.length
 }
 function safeMessage(error: unknown): string {
   if (error instanceof Error && error.message.startsWith('文章操作：')) return error.message.slice('文章操作：'.length)
-  if (error instanceof Error && ['请先在设置中选择草稿目录。', '请先在设置中配置模型地址、模型名称和密钥。', '已有同名主题，请更换主题名称。', '主题不能作为文件夹名称。', '文件已被外部修改，请重新打开后再保存。', '草稿不存在或路径无效。', '草稿文件无效。', '文案内容无效。', '平台标题无效。', '标题文件无效。', '平台标题已被外部修改，请重新打开后重试。', '联网核查不可用或没有找到来源，请重试或选择继续生成未核查草稿。', '内容策划失败，请重试。', '文章为空或超过优化长度限制。', '文章已在外部修改，请重新打开后再优化。', '优化期间文章已在外部修改，请重新打开后重试。', '优化结果为空或过长，请重试。'].includes(error.message)) return error.message
+  if (error instanceof Error && ['请先在设置中选择草稿目录。', '请先在设置中配置模型地址、模型名称和密钥。', '已有同名主题，请更换主题名称。', '主题不能作为文件夹名称。', '文件已被外部修改，请重新打开后再保存。', '草稿不存在或路径无效。', '草稿文件无效。', '文案内容无效。', '平台标题无效。', '标题文件无效。', '平台标题已被外部修改，请重新打开后重试。', '联网核查不可用或没有找到来源，请重试或选择继续生成未核查草稿。', '文章为空或超过优化长度限制。', '文章已在外部修改，请重新打开后再优化。', '优化期间文章已在外部修改，请重新打开后重试。', '优化结果为空或过长，请重试。'].includes(error.message)) return error.message
   return '操作失败，请检查目录、模型配置或网络连接。'
 }
 function handle<T>(event: Electron.IpcMainInvokeEvent, run: () => Promise<T>) {
@@ -114,7 +114,7 @@ export function registerDrafts(): void {
     const root = await getDraftsDirectory()
     if (!root) throw new Error('请先在设置中选择草稿目录。')
     await assertAvailableArticleTitle(root, request.title)
-    return generateDrafts(root, request, async () => '', undefined, undefined, undefined, true)
+    return generateDrafts(root, request, async () => '', undefined, undefined, true)
   }))
   ipcMain.handle('drafts:generate', (event, request: unknown) => handle(event, async (): Promise<CreateResult> => {
     if (!validateRequest(request)) throw new Error('invalid input')

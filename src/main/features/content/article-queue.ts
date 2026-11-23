@@ -20,7 +20,7 @@ type Dependencies = {
 function validRun(value: unknown, id: string): value is ArticleRun {
   if (!value || typeof value !== 'object') return false
   const r = value as ArticleRun, q = r.request
-  return (r.promptSnapshot === undefined || (isPlatformPrompts(r.promptSnapshot.platformPrompts) && isPlatformPrompts(r.promptSnapshot.titlePrompts))) && r.id === id && !!q && typeof q.title === 'string' && q.title.length <= 100 && typeof q.audience === 'string' && q.audience.length <= 500 && (q.angle === undefined || (typeof q.angle === 'string' && q.angle.length <= 2000)) && (q.instruction === undefined || (typeof q.instruction === 'string' && q.instruction.length <= 2000)) && (q.research === 'online' || q.research === 'skip') && Array.isArray(q.platforms) && q.platforms.length > 0 && q.platforms.every(p => platforms.includes(p)) && new Set(q.platforms).size === q.platforms.length && !!r.versions && typeof r.versions === 'object' && q.platforms.every(p => typeof r.versions[p] === 'string' && /^[a-f0-9]{64}$/.test(r.versions[p]!)) && ['queued', 'running', 'waiting', 'failed', 'interrupted', 'done'].includes(r.status) && (r.phase === undefined || ['research', 'plan', 'write', 'review', 'save', 'images'].includes(r.phase)) && (r.message === undefined || (typeof r.message === 'string' && r.message.length <= 10000)) && (r.imageProgress === undefined || (typeof r.imageProgress === 'string' && r.imageProgress.length <= 200)) && isImageStyle(r.imageStyle) && typeof r.generateImages === 'boolean'
+  return (r.promptSnapshot === undefined || (isPlatformPrompts(r.promptSnapshot.platformPrompts) && isPlatformPrompts(r.promptSnapshot.titlePrompts))) && r.id === id && !!q && typeof q.title === 'string' && q.title.length <= 100 && typeof q.audience === 'string' && q.audience.length <= 500 && (q.angle === undefined || (typeof q.angle === 'string' && q.angle.length <= 2000)) && (q.research === 'online' || q.research === 'skip') && Array.isArray(q.platforms) && q.platforms.length > 0 && q.platforms.every(p => platforms.includes(p)) && new Set(q.platforms).size === q.platforms.length && !!r.versions && typeof r.versions === 'object' && q.platforms.every(p => typeof r.versions[p] === 'string' && /^[a-f0-9]{64}$/.test(r.versions[p]!)) && ['queued', 'running', 'waiting', 'failed', 'interrupted', 'done'].includes(r.status) && (r.phase === undefined || ['research', 'plan', 'write', 'review', 'save', 'images'].includes(r.phase)) && (r.message === undefined || (typeof r.message === 'string' && r.message.length <= 10000)) && (r.imageProgress === undefined || (typeof r.imageProgress === 'string' && r.imageProgress.length <= 200)) && isImageStyle(r.imageStyle) && typeof r.generateImages === 'boolean'
 }
 export class ArticleQueue {
   private pending: { root: string; id: string }[] = []
@@ -69,7 +69,7 @@ export class ArticleQueue {
   async start(root: string, options: StartArticleRequest): Promise<Draft> {
     await this.load(root)
     const promptSnapshot = await this.deps.snapshot?.()
-    const created = await generateDrafts(root, options.request, async () => '', undefined, undefined, undefined, true)
+    const created = await generateDrafts(root, options.request, async () => '', undefined, undefined, true)
     if (!created.draft) throw new Error('文章操作：无法创建文章，请检查工作空间。')
     const draft = created.draft, versions: Partial<Record<Platform, string>> = {}, key = this.key(root, draft.id)
     this.preparing.add(key)

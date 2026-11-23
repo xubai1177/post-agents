@@ -36,7 +36,7 @@ export async function regenerateArticle(request: RegenerateRequest, progress: (p
   if (articleQueue.isActive(root, request.id)) throw new Error('文章操作：文章正在生成，请稍候。')
   if ((await readDraft(root, request.id, request.platform)).version !== request.version || await readPlatformTitle(root, request.id, request.platform) !== request.storedTitle) throw new Error('文章操作：文章或标题已变化，请重新打开后重试。')
   const previous = (await articleQueue.load(root)).find(run => run.id === request.id)?.request
-  const generation: CreateRequest = { title: request.title, audience: previous?.audience ?? '', angle: previous?.angle, instruction: previous?.instruction, research: previous?.research ?? 'skip', platforms: [request.platform] }
+  const generation: CreateRequest = { title: request.title, audience: previous?.audience ?? '', angle: previous?.angle, research: previous?.research ?? 'skip', platforms: [request.platform] }
   const result = await generateContent(generation, config, progress, undefined, { id: request.id, versions: { [request.platform]: request.version }, expectedTitle: request.storedTitle })
   if (!result.draft) throw new Error(`文章操作：${result.failures[0]?.error ?? '重新生成失败，请重试。'}`)
   return { document: await readDraft(root, request.id, request.platform), warnings: result.warnings ?? [] }
@@ -46,7 +46,7 @@ export async function createTitles(request: GenerateTitlesRequest) {
   const config = await getRuntimeSettings()
   if (!config.draftsDirectory) throw new Error('请先在设置中选择草稿目录。')
   if (!config.apiUrl || !config.model || !config.apiKey) throw new Error('请先在设置中配置模型地址、模型名称和密钥。')
-  return generateTitles(request, { read: (id, platform) => readDraft(config.draftsDirectory, id, platform), call: createTextModel(config), platformPrompts: config.platformPrompts, titlePrompts: config.titlePrompts })
+  return generateTitles(request, { read: (id, platform) => readDraft(config.draftsDirectory, id, platform), call: createTextModel(config), titlePrompts: config.titlePrompts })
 }
 
 export async function createArticleImages(request: ArticleImagesRequest, onProgress: (message: string) => void): Promise<string[]> {

@@ -28,7 +28,7 @@ export default function App() {
   useAppearance()
   const { confirm, confirmation } = useConfirmDialog()
   const showMessage = useMessage()
-  const [createForm, setCreateForm] = useState<CreateForm>({ title: '', angle: '', instruction: '', audience: '', platforms: [...platforms], imageStyle: defaultImageStyle, generateImages: false })
+  const [createForm, setCreateForm] = useState<CreateForm>({ title: '', angle: '', audience: '', platforms: [...platforms], imageStyle: defaultImageStyle, generateImages: false })
   const [createDirty, setCreateDirty] = useState(false)
   const [newFolderRequest, setNewFolderRequest] = useState(0)
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -207,7 +207,7 @@ export default function App() {
         const queued = await window.draftsApi.startArticle({ request, imageStyle: createForm.imageStyle, generateImages: createForm.generateImages, folderId: articleFolderId })
         if (!queued.ok) { setStatus(queued.error); return null }
         await refresh(queued.value.draft.id)
-        setCreateDirty(false); setCreateForm({ title: '', angle: '', instruction: '', audience: '', platforms: [...platforms], imageStyle: defaultImageStyle, generateImages: false }); setArticleFolderId(null); setTreeVersion(value => value + 1)
+        setCreateDirty(false); setCreateForm({ title: '', angle: '', audience: '', platforms: [...platforms], imageStyle: defaultImageStyle, generateImages: false }); setArticleFolderId(null); setTreeVersion(value => value + 1)
         setSelectedId(queued.value.draft.id); setSelectedPlatform(queued.value.draft.platforms[0]); navigate('detail', queued.value.draft.id, queued.value.draft.platforms[0]); setDrawerOpen(false); setStatus(queued.value.warning || '')
         return { draft: queued.value.draft, failures: [] }
       }
@@ -234,7 +234,7 @@ export default function App() {
         finally { imageRunId.current = '' }
       }
       await refresh(result.value.draft?.id)
-      if (result.value.draft) { setCreateDirty(false); setCreateForm({ title: '', angle: '', instruction: '', audience: '', platforms: [...platforms], imageStyle: defaultImageStyle, generateImages: false }); setArticleFolderId(null); setSelectedId(result.value.draft.id); setSelectedPlatform(result.value.draft.platforms[0]); navigate('detail', result.value.draft.id, result.value.draft.platforms[0]); setDrawerOpen(false) }
+      if (result.value.draft) { setCreateDirty(false); setCreateForm({ title: '', angle: '', audience: '', platforms: [...platforms], imageStyle: defaultImageStyle, generateImages: false }); setArticleFolderId(null); setSelectedId(result.value.draft.id); setSelectedPlatform(result.value.draft.platforms[0]); navigate('detail', result.value.draft.id, result.value.draft.platforms[0]); setDrawerOpen(false) }
       const notes = [...(result.value.failures.length ? [`以下平台生成或保存失败：${result.value.failures.map((item) => item.platform).join('、')}。`] : [blank ? '空白文章已创建。' : '文案已生成并保存，请人工核查事实后使用。']), ...(result.value.warnings ?? []), ...(folderWarning ? [folderWarning] : []), ...(styleWarning ? [styleWarning] : []), ...imageMessages]
       setStatus(notes.join(' '))
       return result.value
@@ -363,7 +363,7 @@ export default function App() {
       message: '新选题会覆盖当前表单的主题、角度、受众和平台。',
       action: '替换表单',
     }))) return
-    setCreateForm({ title: candidate.title, angle: candidate.angle, instruction: '', audience: batch.request.audience, platforms: [...batch.request.platforms], imageStyle: defaultImageStyle, generateImages: false, reference: { skipped: batch.skipped, sources: batch.sources } })
+    setCreateForm({ title: candidate.title, angle: candidate.angle, audience: batch.request.audience, platforms: [...batch.request.platforms], imageStyle: defaultImageStyle, generateImages: false, reference: { skipped: batch.skipped, sources: batch.sources } })
     setCreateDirty(false); openCreate(null)
   }
   return <div className="app-shell notes-shell"><nav className="workspace-rail" aria-label="工作区导航"><div className="rail-brand" aria-label="灵稿 AI"><img src={logoUrl} alt=""/><span aria-hidden="true">灵稿 AI</span></div><Button variant="ghost" type="button" title="内容工作区" aria-label="内容工作区" aria-current={page === 'detail' ? 'page' : undefined} disabled={busy} onClick={() => navigate('detail')}><Icon name="file" size={19}/><span>文章</span></Button><Button variant="ghost" type="button" title="选题工作台" aria-label="选题工作台" aria-current={page === 'topics' ? 'page' : undefined} disabled={busy} onClick={async () => { if (page !== 'detail' || await discardCurrentDocument()) navigate('topics') }}><Icon name="bulb" size={19}/><span>选题</span></Button><Button variant="ghost" type="button" className="rail-settings" title="设置" aria-label="设置" aria-current={page === 'settings' ? 'page' : undefined} disabled={busy} onClick={openSettings}><Icon name="settings" size={19}/><span>设置</span></Button></nav><aside className="notes-sidebar" hidden={page !== 'detail'}><div className="notes-list-header"><h2>内容工作区</h2><div className="new-content-menu" ref={newMenuRef}>
@@ -389,7 +389,7 @@ export default function App() {
         <div><Button type="button" className="primary-button" disabled={busy} onClick={() => openCreate(null)}>新建文章</Button>
         <Button variant="outline" type="button" className="article-secondary-button" disabled={busy} onClick={() => navigate('topics')}>去选题工作台</Button></div>
       </section></Card>)}
-    {page === 'settings' && <Settings key={workspaceVersion} workspaceLocked={topicStatus === '选题生成中' || articleRuns.some(run => run.status === 'queued' || run.status === 'running')} onSaved={(directoryChanged) => { if (directoryChanged) { workspaceVersionRef.current += 1; setRegenerationVersions({}); updateDocuments(() => ({})); updatePlatformTitles(() => ({})); setArticleTitles({}); setArticleStyles({}); setTopicStatus(''); setCreateForm({ title: '', angle: '', instruction: '', audience: '', platforms: [...platforms], imageStyle: defaultImageStyle, generateImages: false }); setCreateDirty(false); setWorkspaceVersion((value) => value + 1) }; void refresh() }} />}
+    {page === 'settings' && <Settings key={workspaceVersion} workspaceLocked={topicStatus === '选题生成中' || articleRuns.some(run => run.status === 'queued' || run.status === 'running')} onSaved={(directoryChanged) => { if (directoryChanged) { workspaceVersionRef.current += 1; setRegenerationVersions({}); updateDocuments(() => ({})); updatePlatformTitles(() => ({})); setArticleTitles({}); setArticleStyles({}); setTopicStatus(''); setCreateForm({ title: '', angle: '', audience: '', platforms: [...platforms], imageStyle: defaultImageStyle, generateImages: false }); setCreateDirty(false); setWorkspaceVersion((value) => value + 1) }; void refresh() }} />}
     </main></div>
     <Sheet open={drawerOpen} onOpenChange={open => { if (!operationBusy) setDrawerOpen(open) }}>
       <SheetContent className="create-drawer article-create-drawer max-w-none gap-0 sm:max-w-none" showCloseButton={false}
