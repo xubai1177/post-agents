@@ -848,16 +848,21 @@ test('新文章先创建并入队，最多三篇并行，切换页面不影响�
     }
   })
   const options = (title: string) => ({ request: { title, audience: '', platforms: ['小红书' as const], research: 'skip' as const }, imageStyle: 'flat' as const, generateImages: false, folderId: null })
-  for (let i = 0; i < 4; i++) await queue.start(root, options(`任务${i}`))
+  const drafts = []
+  for (let i = 0; i < 4; i++) drafts.push(await queue.start(root, options(`任务${i}`)))
   const waitFor = async (check: () => boolean) => { for (let i = 0; i < 200 && !check(); i++) await new Promise(resolve => setTimeout(resolve, 5)); assert.ok(check()) }
   await waitFor(() => releases.length === 3)
   assert.equal((await listDrafts(root)).length, 4); assert.equal(peak, 3)
   assert.equal((await queue.load(root)).filter(run => run.status === 'queued').length, 1)
   releases.shift()!(); await waitFor(() => releases.length === 3)
   while (releases.length) releases.shift()!()
-  await waitFor(() => active === 0)
-  for (let i = 0; i < 200 && (await queue.load(root)).filter(run => run.status === 'done').length < 4; i++) await new Promise(resolve => setTimeout(resolve, 5))
-  assert.equal((await queue.load(root)).filter(run => run.status === 'done').length, 4)
+  const deadline = Date.now() + 10_000
+  const queueIsIdle = () => drafts.every(draft => !queue.isActive(root, draft.id))
+  while (!queueIsIdle() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10))
+  assert.ok(queueIsIdle(), '等待四篇文章完成并保存任务状态超时')
+  const runs = await queue.load(root)
+  assert.equal(runs.filter(run => run.status === 'done').length, 4,
+    runs.map(run => `${run.request.title} ${run.status} ${run.message ?? ''}`).join('\n'))
 }))
 
 test('排队任务使用创建时的规则快照', () => withRoot(async root => {
