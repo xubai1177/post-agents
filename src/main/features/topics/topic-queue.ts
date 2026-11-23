@@ -23,10 +23,10 @@ export class TopicQueue {
     let initial = this.initialized.get(root)
     if (!initial) {
       initial = this.deps.update(root, data => {
-        if (!(data.topicRuns ?? []).some(task => task.status === 'queued' || task.status === 'running' || task.status === 'waiting')) return data
+        if (!(data.topicRuns ?? []).some(task => task.status === 'queued' || task.status === 'running' || task.status === 'waiting') && !data.tasks.some(task => task.status === 'running' && !task.draftId)) return data
         const restored = markInterruptedTopicTasks(data)
         // Article creation has its own lifecycle and must not be changed here.
-        return { ...data, topicRuns: restored.topicRuns }
+        return { ...data, topicRuns: restored.topicRuns, tasks: data.tasks.map(task => task.status === 'running' && !task.draftId ? { ...task, status: 'interrupted', message: '任务已中断，请检查已有文章后重新创建。' } : task) }
       }).then(() => undefined)
       this.initialized.set(root, initial)
       void initial.catch(() => { if (this.initialized.get(root) === initial) this.initialized.delete(root) })

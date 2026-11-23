@@ -56,7 +56,7 @@ export async function planContent(call: ModelCall, title: string, audience: stri
   }
 }
 export async function writeContent(call: ModelCall, title: string, audience: string, platform: Platform, plan: ContentPlan, sources: SourceMaterial[], platformPrompts?: PlatformPrompts, instruction?: string, titlePrompts?: PlatformPrompts): Promise<{ title: string; content: string }> {
-  const system = `${systemRules} 为 ${platform} 生成标题和正文。仅返回 JSON 对象，包含 title（单行标题）和 content（Markdown 正文）；正文不要包含文章标题，允许小标题。${timeRules}${rulePriority}${readerFacingRules}根据资料写作，保留影响读者判断的必要条件和不确定性。`
+  const system = `${systemRules} 为 ${platform} 生成标题和正文。仅返回 JSON 对象，包含 title（单行标题）和 content（Markdown 正文）；标题只放在 title 中，正文直接开始，不要重复标题；正文小标题使用二级及以下 Markdown 标题。${timeRules}${rulePriority}${readerFacingRules}根据资料写作，保留影响读者判断的必要条件和不确定性。`
   const raw = await call(system, `主题：${title}\n受众：${audience || '未指定'}\n本平台策划：${plan.platforms[platform]}\n共同事实：${plan.commonFacts}\n待核：${plan.pending.join('；') || '无明确记录，但仍需核查'}\n资料：\n${sources.length ? evidenceText(sources) : '无联网资料。'}\n\n本次要求：${instruction?.trim() || '无'}\n平台写作要求：${resolvePlatformPrompts(platformPrompts)[platform]}\n标题写作要求：${resolveTitlePrompts(titlePrompts)[platform]}\n按以上用户写作要求生成面向读者的成品，避免把未经核实的内容说成确定事实。`)
   const parsed = parseJson(raw)
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('生成结果格式无效。')

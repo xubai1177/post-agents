@@ -58,6 +58,7 @@ contextBridge.exposeInMainWorld('imagesApi', images)
 
 const topics: TopicsApi = {
   readRecords: () => ipcRenderer.invoke('topics:read-records'),
+  startBatch: (request) => ipcRenderer.invoke('topics:start-batch', request),
   saveRecords: (data) => ipcRenderer.invoke('topics:save-records', data),
   start: (request) => ipcRenderer.invoke('topics:start', request),
   retry: (id, mode) => ipcRenderer.invoke('topics:retry', id, mode),

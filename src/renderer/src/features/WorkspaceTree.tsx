@@ -9,11 +9,7 @@ import { useEffect, useRef, useState, type DragEvent, type FormEvent, type Mouse
 import type { ArticleRun, Draft, Platform } from '../../../shared/drafts'
 import type { WorkspaceChange, WorkspaceFolder, WorkspaceIndex } from '../../../shared/workspace'
 import { Icon } from '../components/Icon'
-import xiaohongshuLogo from '../assets/xiaohongshu.svg'
-import wechatLogo from '../assets/wechat.svg'
-import douyinLogo from '../assets/tiktok.svg'
-
-const platformLogos: Record<Platform, string> = { '小红书': xiaohongshuLogo, '公众号': wechatLogo, '抖音图文': douyinLogo }
+import { platformLogos } from './platform-logos'
 
 type Props = { drafts: Draft[]; articleRuns: ArticleRun[]; selectedId: string; selectedPlatform: Platform; platformTitles: Record<string, { value: string }>; enabled: boolean; refreshKey: number; createRequest: number; onOpen: (draft: Draft, platform: Platform) => void; onCreateArticle: (folderId: string) => void; onDeleteArticle: (draft: Draft) => Promise<boolean> }
 type Editor = { type: 'create'; parentId: string | null } | { type: 'rename'; folder: WorkspaceFolder }
@@ -113,7 +109,7 @@ export function WorkspaceTree({ drafts, articleRuns, selectedId, selectedPlatfor
             }
           }}
           >
-          <Icon name="folder" size={15}/><span>{titledDraft.title}</span>
+          <Icon name="folder" size={16}/><span>{titledDraft.title}</span>
           {running && <small>生成中</small>}
           {needsAttention && <small>待处理</small>}
         </summary>

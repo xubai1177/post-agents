@@ -183,18 +183,18 @@ test('无逐条来源的联网摘要会再次检索复核周期，失败时保�
 
 test('策划兼容完整对象末尾多出的一个右括号，仍拒绝无效或多余内容', async () => {
   const { planContent } = await import('../src/main/features/content/content-pipeline')
-  const value = { commonFacts: '事实含 } 字符', pending: [], platforms: { 小红书: '计划' } }
+  const value = { platforms: { 小红书: '计划含 } 字符' } }
   const json = JSON.stringify(value)
   for (const raw of [json, `${json}}`, `以下是策划结果：${json}`, `以下是策划结果：${json}}`, `\`\`\`json\n${json}}\n\`\`\``]) {
     const result = await planContent(async () => raw, '主题', '', ['小红书'], [])
-    assert.equal(result.commonFacts, value.commonFacts)
+    assert.equal(result.platforms.小红书, value.platforms.小红书)
   }
   for (const raw of [`${json}}}`, `${json}说明`, `${'前'.repeat(1001)}${json}`,  '{"commonFacts":']) {
     await assert.rejects(planContent(async () => raw, '主题', '', ['小红书'], []))
   }
   let attempts = 0
   const recovered = await planContent(async () => ++attempts === 1 ? '无效输出' : json, '主题', '', ['小红书'], [])
-  assert.equal(attempts, 2); assert.equal(recovered.commonFacts, value.commonFacts)
+  assert.equal(attempts, 2); assert.equal(recovered.platforms.小红书, value.platforms.小红书)
   let schemaAttempts = 0
   const recoveredSchema = await planContent(async () => ++schemaAttempts === 1 ? JSON.stringify({ ...value, platforms: { 小红书: { outline: '计划' } } }) : json, '主题', '', ['小红书'], [])
   assert.equal(schemaAttempts, 1); assert.match(recoveredSchema.platforms.小红书 ?? '', /计划/)
@@ -214,15 +214,17 @@ test('单平台自查后按资料和写作规则改进，失败时保留初稿',
   const { reviewVersions } = await import('../src/main/features/content/content-pipeline')
   const original = { 抖音图文: '初稿' }
   const calls: { system: string; user: string }[] = []
-  const context = { title: '主题', audience: '读者', plan: { commonFacts: '已有依据', pending: ['核查地域'], platforms: { 抖音图文: '计划' } }, sources: [] }
+  const source = { title: '参考指南', url: 'https://example.com/guide', retrievedAt: '2026-11-18', fetched: true, text: '原始参考内容' }
+  const context = { title: '主题', audience: '读者', sources: [source] }
   const result = await reviewVersions(async (system, user) => {
     calls.push({ system, user })
     return calls.length === 1 ? JSON.stringify({ 抖音图文: '解释适用条件和原因' }) : '改进后的完整文案'
   }, original, { 抖音图文: '自定义格式' }, context)
   assert.equal(result.drafts.抖音图文, '改进后的完整文案')
   assert.deepEqual(result.warnings, [])
-  assert.match(calls[0].system, /原因分析/); assert.match(calls[0].user, /自定义格式/)
-  assert.match(calls[1].user, /已有依据/); assert.match(calls[1].user, /核查地域/)
+  assert.match(calls[0].user, /自定义格式/)
+  assert.match(calls[0].user, /原始参考内容/)
+  assert.match(calls[1].user, /原始参考内容/)
   const failed = await reviewVersions(async () => { throw new Error('offline') }, original)
   assert.deepEqual(failed.drafts, original); assert.match(failed.warnings[0], /内容检查未完成/)
   let count = 0
@@ -234,8 +236,8 @@ test('多平台检查分别处理反馈，缺失或无效反馈不会丢失初�
   const { reviewVersions } = await import('../src/main/features/content/content-pipeline')
   const original = { 小红书: '初稿一', 公众号: '初稿二', 抖音图文: '初稿三' }
   let count = 0
-  const result = await reviewVersions(async (system) => {
-    if (++count === 1) { assert.match(system, /过于相似/); return JSON.stringify({ 小红书: '改善表达', 公众号: 123 }) }
+  const result = await reviewVersions(async () => {
+    if (++count === 1) return JSON.stringify({ 小红书: '改善表达', 公众号: 123 })
     return '修订一'
   }, original)
   assert.deepEqual(result.drafts, { ...original, 小红书: '修订一' })
@@ -586,12 +588,12 @@ test('各平台规则支持默认值、单独覆盖、恢复默认及长度校�
   assert.equal(isPlatformPrompts({ 公众号: '正常规则' }), true)
 })
 
-test('小红书自定义规则贯穿生成和检查，不强制固定人设', async () => {
+test('跳过联网时按平台与本次要求完成各步骤，不附加核查限制', async () => {
   const { planContent, writeContent, reviewVersions } = await import('../src/main/features/content/content-pipeline')
   const calls: { system: string; user: string }[] = []
   const call = async (system: string, user: string) => {
     calls.push({ system, user })
-    if (system.includes('共同策划')) return JSON.stringify({ commonFacts: '', pending: [], platforms: { 小红书: '计划' } })
+    if (system.includes('共同策划')) return JSON.stringify({ platforms: { 小红书: '计划' } })
     if (system.includes('检查各平台')) return JSON.stringify({ 小红书: '改进' })
     if (system.includes('生成标题和正文')) return JSON.stringify({ title: '标题', content: '正文' })
     return '# 文案'
@@ -600,22 +602,20 @@ test('小红书自定义规则贯穿生成和检查，不强制固定人设', as
   const instruction = '这次使用问答形式'
   const plan = await planContent(call, '主题', '', ['小红书'], [], undefined, prompts, instruction)
   await writeContent(call, '主题', '', '小红书', plan, [], prompts, instruction)
-  await reviewVersions(call, { 小红书: '初稿' }, prompts, { title: '主题', audience: '', plan, sources: [], instruction })
+  await reviewVersions(call, { 小红书: '初稿' }, prompts, { title: '主题', audience: '', sources: [], instruction })
+  assert.equal(calls.length, 4)
+  assert.deepEqual(plan.pending, [])
   for (const { system, user } of calls) {
     assert.match(user, /语气正式，不用姐妹/)
     assert.match(user, /这次使用问答形式/)
     assert.match(system, /本次要求与平台写作要求冲突时，以本次要求为准/)
-    assert.doesNotMatch(system, /像小姐妹|热心小姐妹|使用“姐妹”/)
+    assert.doesNotMatch(system, /核查|待核|可靠依据|只能依据|像小姐妹|热心小姐妹|使用“姐妹”/)
+    assert.doesNotMatch(user, /联网资料|参考资料：|待核/)
   }
-  for (const { system } of calls.slice(1)) {
-    assert.match(system, /不是输出内部策划或核查报告/)
-    assert.match(system, /待核清单是内部参考/)
-  }
-  assert.match(calls[3].system, /检查建议只用于修正问题/)
   assert.ok(calls[3].user.lastIndexOf('平台写作要求：') > calls[3].user.lastIndexOf('原文：'))
 })
 
-test('平台自定义规则用于策划、写作、调整和优化且不覆盖通用事实要求', async () => {
+test('策划使用所选平台规则，写作、调整和优化分别使用对应平台规则', async () => {
   const { planContent, writeContent, reviewVersions } = await import('../src/main/features/content/content-pipeline')
   const { optimizeContent } = await import('../src/main/features/content/optimize')
   const prompts = { 小红书: '使用三段清单', 公众号: '使用深入问答' }
@@ -633,7 +633,7 @@ test('平台自定义规则用于策划、写作、调整和优化且不覆盖�
   await optimizeContent({ id: '主题', platform: '公众号', version: 'v1', content: '原文', instruction: '' }, { read: async () => ({ content: '原文', version: 'v1' }), call, platformPrompts: prompts })
   assert.match(calls[0].user, /使用三段清单/); assert.match(calls[0].user, /使用深入问答/)
   assert.match(calls[1].user, /使用三段清单/); assert.doesNotMatch(calls[1].user, /使用深入问答/)
-  assert.match(calls[1].system, /禁止编造/); assert.match(calls[3].user, /使用深入问答/); assert.match(calls[4].user, /使用深入问答/)
+  assert.match(calls[3].user, /使用深入问答/); assert.match(calls[4].user, /使用深入问答/)
 })
 
 test('加密备份保存平台自定义规则，旧备份仍可读取', () => withRoot(async (root) => {
@@ -1176,13 +1176,14 @@ test('各平台生成独立标题并按各自规则写入，正文不包含标�
       if (system.includes('共同策划')) return JSON.stringify({ commonFacts: '', pending: [], platforms: { 小红书: '计划', 公众号: '计划' } })
       if (system.includes('检查各平台')) return JSON.stringify({ 小红书: '', 公众号: '' })
       calls.push(user)
-      return JSON.stringify({ title: system.includes('小红书') ? '小红书标题' : '公众号标题', content: '正文内容' })
+      return JSON.stringify(system.includes('小红书') ? { title: '小红书标题', content: '**小红书标题**\n\n正文内容' } : { title: '公众号标题', content: '# 另一种文章标题\n\n## 正文小标题\n正文内容' })
     }
   })
   assert.deepEqual(result.draft?.platforms, ['小红书', '公众号'])
   assert.equal(await readPlatformTitle(root, '主题', '小红书'), '小红书标题')
   assert.equal(await readPlatformTitle(root, '主题', '公众号'), '公众号标题')
-  assert.equal((await readDraft(root, '主题', '公众号')).content, '正文内容\n')
+  assert.equal((await readDraft(root, '主题', '小红书')).content, '正文内容\n')
+  assert.equal((await readDraft(root, '主题', '公众号')).content, '## 正文小标题\n正文内容\n')
   assert.match(calls[0], /简短活泼/); assert.match(calls[1], /严谨深入/)
 }))
 
@@ -1213,7 +1214,7 @@ test('按最新平台标题重新生成只替换该平台正文并保留标题',
     research: async () => [], saveResearch: async () => {},
     createModel: () => async (system, user) => {
       if (system.includes('共同策划')) { assert.match(user, /最新标题/); planned = true; return JSON.stringify({ commonFacts: '', pending: [], platforms: { 公众号: '计划' } }) }
-      if (system.includes('生成标题和正文')) return JSON.stringify({ title: '不采用的标题', content: '新正文' })
+      if (system.includes('生成标题和正文')) return JSON.stringify({ title: '不采用的标题', content: '最新标题\n\n新正文' })
       return JSON.stringify({ 公众号: '' })
     }
   }, { id, versions: { 公众号: version }, expectedTitle: '最新标题' })
@@ -1263,4 +1264,22 @@ test('后台生成完成后，迟到的文章读取不会覆盖新内容', async
     read: async () => { documents = { '文章:公众号': { content: '生成的新内容', savedContent: '生成的新内容', version: 'new' } }; return { ok: true as const, value: { content: '过时的读取', version: 'old' } } }
   })
   assert.equal(documents['文章:公众号'].content, '生成的新内容')
+})
+
+test('批量文章交给后台队列并根据文章任务展示最新状态', async () => {
+  const { startBatchArticles, taskWithArticleRun } = await import('../src/main/features/topics/batch-articles')
+  const request = { direction: '选题', audience: '读者', platforms: ['小红书' as const] }
+  let data: import('../src/shared/topics').TopicWorkspace = { version: 1, batches: [{ id: 'batch', createdAt: '2026-01-01', batch: { request, candidates: [{ title: '主题一', angle: '角度', reason: '', platforms: [], sourceIndexes: [], pending: [] }, { title: '主题二', angle: '', reason: '', platforms: [], sourceIndexes: [], pending: [] }], sources: [], skipped: false } }], tasks: [] }
+  const started: import('../src/shared/drafts').StartArticleRequest[] = []
+  await startBatchArticles('root', { batchId: 'batch', indexes: [0, 1], platforms: ['小红书'], imageStyle: 'flat', generateImages: true }, {
+    update: async (_root, change) => { data = change(data); return data }, assertTitle: async (_root, title) => { if (title === '主题二') throw new Error('已有同名主题，请更换主题名称。') },
+    start: async (_root, options) => { started.push(options); return { id: options.request.title, title: options.request.title, platforms: options.request.platforms } }
+  })
+  assert.equal(started.length, 1); assert.equal(started[0].request.angle, '角度'); assert.equal(started[0].generateImages, true)
+  assert.equal(data.tasks[0].draftId, '主题一'); assert.equal(data.tasks[1].status, 'failed')
+  const run = { id: '主题一', request: started[0].request, versions: {}, status: 'running' as const, phase: 'images' as const, imageProgress: '正在生成第 2 张', imageStyle: 'flat' as const, generateImages: true }
+  assert.equal(taskWithArticleRun(data.tasks[0], [run]).phase, '正在生成第 2 张')
+  assert.equal(taskWithArticleRun(data.tasks[0], [{ ...run, status: 'done' }]).status, 'done')
+  assert.equal(taskWithArticleRun(data.tasks[0], [{ ...run, status: 'waiting' }]).waiting, true)
+  assert.equal(taskWithArticleRun(data.tasks[0], []).status, 'interrupted')
 })

@@ -1,5 +1,4 @@
 import { Checkbox } from '@/components/ui/checkbox'
-import { Separator } from '@/components/ui/separator'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -9,8 +8,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useEffect, useState, type FormEvent } from 'react'
 import { platforms, type Platform } from '../../../shared/drafts'
 import { defaultPlatformPrompts, resolvePlatformPrompts, defaultTitlePrompts, resolveTitlePrompts } from '../../../shared/platform-prompts'
-import { defaultAccentColor, defaultPanelOpacity, themePresetForColor, themePresets, type AppSettings, type KeyChange, type LegacySettings } from '../../../shared/settings'
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { defaultAccentColor, defaultPanelOpacity, type AppSettings, type KeyChange, type LegacySettings } from '../../../shared/settings'
 import { Icon } from '../components/Icon'
 import { WorkspaceManager } from './WorkspaceManager'
 
@@ -110,24 +108,9 @@ export function Settings({ onSaved, workspaceLocked }: { onSaved: (directoryChan
   return <div className="page-wrap settings-page"><div className="page-title settings-title"><h1>设置</h1></div><div className="settings-layout"><nav className="settings-nav" aria-label="设置目录"><strong>设置目录</strong><Button variant="ghost" type="button" onClick={() => document.getElementById('workspace-settings')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>工作空间管理</Button><Button variant="ghost" type="button" onClick={() => document.getElementById('settings-appearance')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>外观</Button><Button variant="ghost" type="button" onClick={() => document.getElementById('settings-model')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>模型服务</Button><Button variant="ghost" type="button" onClick={() => document.getElementById('settings-prompts')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>平台生成规则</Button><Button variant="ghost" type="button" onClick={() => document.getElementById('settings-image')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>图片生成服务</Button></nav><div><div id="workspace-settings">{workspaceLocked && <p role="status">生成任务进行期间，暂不能切换工作空间。</p>}<WorkspaceManager disabled={loading || saving || workspaceLocked} onChanged={() => onSaved(true)} /></div><form className="settings-form" onSubmit={save}>
     <fieldset disabled={loading || saving || fetchingModels} className="settings-fields"><Card asChild><section className="form-card" id="settings-appearance">
       <div className="form-heading"><div className="form-heading-icon"><Icon name="settings" size={20}/></div><div><h2>外观</h2><p>选择主题色与面板通透程度。</p></div></div>
-      <fieldset className="appearance-options">
-        <legend id="appearance-preset-label">内置主题</legend>
-        <RadioGroup className="appearance-modes" aria-labelledby="appearance-preset-label" value={themePresetForColor(accentColor)?.id ?? ''}
-          onValueChange={id => {
-            const preset = themePresets.find(theme => theme.id === id)
-            if (preset) setAccentColor(preset.color)
-          }}>
-          {themePresets.map(theme => <Label key={theme.id} className="appearance-choice">
-            <RadioGroupItem aria-label={theme.label} value={theme.id} disabled={loading || saving || fetchingModels}/>
-            <span className="theme-swatch" style={{ backgroundColor: theme.color }} aria-hidden="true"/>
-            <span>{theme.label}</span>
-          </Label>)}
-        </RadioGroup>
-      </fieldset>
-      <Separator className="mb-3"/>
       <div className="appearance-colors">
-        <Label className="appearance-color"><span>自定义主色</span><Input aria-label="选择主题颜色" type="color" value={accentColor} onChange={e => setAccentColor(e.target.value)}/><code>{accentColor.toUpperCase()}</code></Label>
-        <Button variant="link" size="xs" type="button" className="reload-button" onClick={() => setAccentColor(defaultAccentColor)}>恢复默认配色</Button>
+        <Label className="appearance-color"><span>主题颜色</span><Input aria-label="选择主题颜色" type="color" value={accentColor} onChange={e => { setAccentColor(e.target.value); document.documentElement.style.setProperty('--brand', e.target.value) }}/><code>{accentColor.toUpperCase()}</code></Label>
+        <Button variant="link" size="xs" type="button" className="reload-button" onClick={() => { setAccentColor(defaultAccentColor); document.documentElement.style.setProperty('--brand', defaultAccentColor) }}>恢复默认配色</Button>
       </div>
       <div className="panel-opacity-control"><div className="panel-opacity-heading"><Label htmlFor="panel-opacity">面板不透明度</Label><output htmlFor="panel-opacity">{panelOpacity}%</output></div><input id="panel-opacity" type="range" min={70} max={100} step={1} value={panelOpacity} onChange={event => { const value = Number(event.target.value); setPanelOpacity(value); document.documentElement.style.setProperty('--panel-opacity', `${value}%`) }} /><small>调整侧栏、卡片和弹窗的通透程度；文字与控件保持清晰。保存后生效。</small></div>
     </section></Card>

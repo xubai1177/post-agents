@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { Icon } from '../components/Icon'
 import { useMessage } from '../components/MessageProvider'
@@ -44,7 +45,7 @@ export function TitleGenerator({ draft, platform, title, document, busy, onBusy,
     } catch { message('无法检查文章，请重试。', true) } finally { setLoading(false); onBusy(false) }
   }
   return <>
-    <Button type="button" variant="ghost" size="icon-sm" className="title-ai-trigger" aria-label={`AI 生成${platform}标题`} title="AI 生成标题" disabled={busy || title === null} onClick={() => void generate()}><Icon name="spark" size={16}/></Button>
+    <Tooltip><TooltipTrigger asChild><Button type="button" variant="outline" size="icon-sm" className="title-ai-trigger" aria-label={`AI 生成${platform}标题`} disabled={busy || title === null} onClick={() => void generate()}><Icon name="spark" size={16}/></Button></TooltipTrigger><TooltipContent>生成标题</TooltipContent></Tooltip>
     <Dialog open={open} onOpenChange={value => { if (!loading) setOpen(value) }}>
       <DialogContent className="style-dialog title-generator-dialog" onInteractOutside={event => { if (loading) event.preventDefault() }} onEscapeKeyDown={event => { if (loading) event.preventDefault() }} showCloseButton={false}>
         <div className="title-generator-content"><div className="title-generator-header"><div className="title-generator-heading"><span className="title-generator-icon" aria-hidden="true"><Icon name="spark" size={17}/></span><DialogTitle>AI 生成标题</DialogTitle></div><Button variant="ghost" size="icon-sm" className="title-generator-close" aria-label="关闭" disabled={loading} onClick={() => setOpen(false)}><Icon name="close" size={17}/></Button></div><DialogDescription className="sr-only">选择一个标题，确认后替换当前平台标题。</DialogDescription>

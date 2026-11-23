@@ -94,8 +94,6 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 
 .workspace-folder summary { display:flex; align-items:center; gap:7px; min-width:0; list-style:none; border-radius:6px; color:#465367; }
 .workspace-folder summary::-webkit-details-marker { display:none; }
-.workspace-folder summary:before { content:"▸"; font-size:10px; color:#8b96a4; }
-.workspace-folder[open]>summary:before { content:"▾"; }
 .workspace-folder summary span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .workspace-folder summary:hover { background:#e6ebf2; }
 .workspace-name-editor { min-width:0; padding:3px 2px 5px; }

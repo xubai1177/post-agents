@@ -1,4 +1,5 @@
 import type { Platform } from './drafts'
+import type { ImageStyle } from './image-styles'
 import type { ResearchSource } from './research'
 import type { Result } from './settings'
 
@@ -13,12 +14,13 @@ export interface TopicBatch { request: TopicRequest; candidates: TopicCandidate[
 export interface TopicEvent { runId: string; phase: 'search' | 'read' | 'generate' | 'organize'; sources?: ResearchSource[] }
 export type TopicRunResult = { status: 'research_failed'; error: string } | { status: 'completed'; batch: TopicBatch; warning?: string }
 export interface TopicRecord { id: string; createdAt: string; batch: TopicBatch }
-export interface TopicTask { id: string; batchId: string; index: number; title: string; status: 'running' | 'done' | 'failed' | 'interrupted'; draftId?: string; message?: string }
+export interface TopicTask { id: string; batchId: string; index: number; title: string; status: 'running' | 'done' | 'failed' | 'interrupted'; draftId?: string; message?: string; phase?: string; waiting?: boolean }
 export interface TopicGenerationTask { id: string; request: TopicRequest; createdAt: string; status: 'queued' | 'running' | 'waiting' | 'done' | 'failed' | 'interrupted'; phase: TopicEvent['phase']; message?: string; recordId?: string }
 export interface TopicWorkspace { version: 1; batches: TopicRecord[]; tasks: TopicTask[]; topicRuns?: TopicGenerationTask[] }
 export interface TopicsApi {
   readRecords: () => Promise<Result<TopicWorkspace>>
   saveRecords: (data: TopicWorkspace) => Promise<Result<TopicWorkspace>>
+  startBatch: (request: { batchId: string; indexes: number[]; platforms: Platform[]; imageStyle: ImageStyle; generateImages: boolean }) => Promise<Result<void>>
   start: (request: TopicRequest) => Promise<Result<void>>
   retry: (id: string, mode: 'retry' | 'skip') => Promise<Result<void>>
   onChanged: (callback: () => void) => () => void

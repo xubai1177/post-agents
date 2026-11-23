@@ -14,11 +14,10 @@ import { defaultImageStyle, type ImageStyle } from '../../../shared/image-styles
 import { defaultTopicCount, minTopicCount, maxTopicCount } from '../../../shared/topics'
 import type { TopicBatch, TopicCandidate, TopicEvent, TopicWorkspace } from '../../../shared/topics'
 import { PublishSettings } from './Create'
-import { Textarea } from '@/components/ui/textarea'
 
 const empty = (): TopicWorkspace => ({ version: 1, batches: [], tasks: [] })
 const phaseLabels: Record<TopicEvent['phase'], string> = { search: '搜索公开资料', read: '读取来源', generate: '生成候选选题', organize: '整理返回结果' }
-export function Topics({ onChoose, onStatus, onOpen, onBatchBusy, drafts }: { onChoose: (candidate: TopicCandidate, batch: TopicBatch) => void; onStatus: (status: string) => void; onOpen: (draft: Draft) => void; onBatchBusy: (busy: boolean) => void; drafts: Draft[] }) {
+export function Topics({ onChoose, onStatus, onOpen, onBatchBusy, drafts, active }: { onChoose: (candidate: TopicCandidate, batch: TopicBatch) => void; onStatus: (status: string) => void; onOpen: (draft: Draft) => void; onBatchBusy: (busy: boolean) => void; drafts: Draft[]; active: boolean }) {
   const [data, setData] = useState<TopicWorkspace>(empty)
   const dataRef = useRef<TopicWorkspace>(empty())
   const [loaded, setLoaded] = useState(false), [message, setMessage] = useState('')
@@ -35,24 +34,11 @@ export function Topics({ onChoose, onStatus, onOpen, onBatchBusy, drafts }: { on
   const [direction, setDirection] = useState(''), [audience, setAudience] = useState('')
   const [count, setCount] = useState(defaultTopicCount)
   const [selected, setSelected] = useState<number[]>([]), [chosen, setChosen] = useState<Platform[]>([...platforms])
-  const [batchItems, setBatchItems] = useState<{ index: number; title: string; angle: string }[]>([])
-  const [batchInstruction, setBatchInstruction] = useState(''), [batchAudience, setBatchAudience] = useState('')
   const [batchError, setBatchError] = useState('')
   const [images, setImages] = useState(false), [style, setStyle] = useState<ImageStyle>(defaultImageStyle)
   const [batchBusy, setBatchBusy] = useState(false), [submitting, setSubmitting] = useState(false), [retrying, setRetrying] = useState('')
   const submitRef = useRef(false), batchButtonRef = useRef<HTMLButtonElement>(null), refreshId = useRef(0)
-  const saveQueue = useRef<Promise<void>>(Promise.resolve())
   const record = data.batches.find(item => item.id === recordId)
-  function persist(update: (current: TopicWorkspace) => TopicWorkspace): Promise<void> {
-    const work = saveQueue.current.then(async () => {
-      const next = update(dataRef.current)
-      const result = await window.topicsApi.saveRecords(next)
-      if (!result.ok) throw new Error(result.error)
-      refreshId.current++; dataRef.current = result.value; setData(result.value)
-    })
-    saveQueue.current = work.catch(() => undefined)
-    return work
-  }
   async function refreshRecords(): Promise<void> {
     const id = ++refreshId.current
     try {
@@ -70,6 +56,7 @@ export function Topics({ onChoose, onStatus, onOpen, onBatchBusy, drafts }: { on
     void refreshRecords()
     return () => { active = false; refreshId.current++; unsubscribe() }
   }, [])
+  useEffect(() => { if (active) void refreshRecords() }, [active])
   useEffect(() => {
     if (!notice) return
     const timer = window.setTimeout(() => setNotice(false), 2800)
@@ -109,37 +96,27 @@ export function Topics({ onChoose, onStatus, onOpen, onBatchBusy, drafts }: { on
   }
   async function openSource(url: string) { try { const result = await window.topicsApi.openSource(url); if (!result.ok) setMessage('无法打开来源链接。') } catch { setMessage('无法打开来源链接。') } }
   async function createBatch() {
-    if (!record || !batchItems.length || !chosen.length || batchBusy) return
-    if (batchItems.some(item => !item.title.trim())) { setBatchError('请填写每篇文章的内容主题。'); return }
-    const available = batchItems.filter(item => !dataRef.current.tasks.some(task => task.batchId === record.id && task.index === item.index && (task.status === 'running' || task.status === 'done')))
-    if (!available.length) { setBatchError('所选选题已创建任务。'); return }
-    setBatchBusy(true); onBatchBusy(true); setMessage('')
-    const tasks = available.map(item => ({ id: crypto.randomUUID(), batchId: record.id, index: item.index, title: item.title.trim(), status: 'running' as const }))
+    if (!record || !selected.length || !chosen.length || batchBusy) return
+    setBatchBusy(true); onBatchBusy(true); setBatchError('')
     try {
-      await persist(current => ({ ...current, tasks: [...tasks, ...current.tasks] })); setDrawer(null); setView('tasks'); setSelected([])
-      for (const task of tasks) {
-        let status: 'done' | 'failed' = 'failed', draftId: string | undefined, message = ''
-        try {
-          const item = available.find(candidate => candidate.index === task.index)
-          if (!item) throw new Error('找不到选题内容。')
-          const result = await window.draftsApi.generate({ title: item.title.trim(), angle: item.angle.trim(), instruction: batchInstruction.trim(), audience: batchAudience.trim(), platforms: chosen, research: 'online' })
-          if (!result.ok) message = result.error
-          else if (!result.value.draft) message = result.value.failures.map(item => `${item.platform}：${item.error}`).join('；') || '文章生成失败。'
-          else {
-            status = 'done'; draftId = result.value.draft.id
-            const notes = [...result.value.failures.map(item => `${item.platform}：${item.error}`), ...(result.value.warnings ?? [])]
-            const savedStyle = await window.workspaceApi.change({ type: 'setImageStyle', draftId, style })
-            if (!savedStyle.ok) notes.push(`图片风格保存失败：${savedStyle.error}`)
-            if (images) { const generated = await window.imagesApi.generateForArticle({ id: draftId, platforms: result.value.draft.platforms, style, runId: crypto.randomUUID() }); if (generated.ok) notes.push(...generated.value); else notes.push(`配图生成失败：${generated.error}`) }
-            message = notes.join('；')
-          }
-        } catch { message = draftId ? '文章已保存，后续处理失败，请检查文章。' : '生成失败，请检查模型服务和网络。' }
-        await persist(current => ({ ...current, tasks: current.tasks.map(item => item.id === task.id ? { ...item, status, ...(draftId ? { draftId } : {}), ...(message ? { message } : {}) } : item) }))
-      }
-      setMessage('批量创作已结束，请检查每篇文章及来源。')
-    } catch (error) { setMessage(`无法保存任务记录，已停止后续创作：${error instanceof Error ? error.message : '请检查工作空间。'}`) }
+      const result = await window.topicsApi.startBatch({ batchId: record.id, indexes: selected, platforms: chosen, imageStyle: style, generateImages: images })
+      if (!result.ok) { setBatchError(result.error); return }
+      setDrawer(null); setView('tasks'); setTaskView('active'); setSelected([])
+      await refreshRecords()
+    } catch { setBatchError('无法创建文章任务，请检查工作空间。') }
     finally { setBatchBusy(false); onBatchBusy(false) }
   }
+  async function retryArticleTask(id: string, skip: boolean) {
+    if (retrying) return
+    setRetrying(id)
+    try {
+      const result = await window.draftsApi.retryArticle(id, skip)
+      if (!result.ok) setMessage(result.error)
+      await refreshRecords()
+    } catch { setMessage('无法重试，请检查工作空间。') }
+    finally { setRetrying('') }
+  }
+
   const topicRuns = data.topicRuns ?? []
   const linkedRecords = new Set(topicRuns.map(task => task.recordId).filter((id): id is string => Boolean(id)))
   const legacyRecords = data.batches.filter(item => !linkedRecords.has(item.id))
@@ -173,7 +150,7 @@ export function Topics({ onChoose, onStatus, onOpen, onBatchBusy, drafts }: { on
           <Button variant="ghost" type="button" aria-pressed={view === 'records'} onClick={() => { setView('records'); setRecordId('') }}>
             选题记录 <span>{recordCount}</span>
           </Button>
-          <Button variant="ghost" type="button" aria-pressed={view === 'tasks'} onClick={() => setView('tasks')}>
+          <Button variant="ghost" type="button" aria-pressed={view === 'tasks'} onClick={() => { setView('tasks'); void refreshRecords() }}>
             创作任务 <span>{data.tasks.length}</span>
           </Button>
         </div>
@@ -237,7 +214,7 @@ export function Topics({ onChoose, onStatus, onOpen, onBatchBusy, drafts }: { on
           <div className="topic-batch-heading">
             <div><strong>选题明细</strong><span>已选 {selected.length} 项</span></div>
             <Button type="button" ref={batchButtonRef} className="primary-button" disabled={!selected.length || batchBusy}
-              onClick={() => { setChosen([...platforms]); setImages(false); setStyle(defaultImageStyle); setBatchInstruction(''); setBatchAudience(record.batch.request.audience); setBatchError(''); setBatchItems(selected.map(index => ({ index, title: record.batch.candidates[index].title, angle: record.batch.candidates[index].angle }))); setDrawer('batch') }}>批量创建文章</Button>
+              onClick={() => { setChosen([...platforms]); setImages(false); setStyle(defaultImageStyle); setBatchError(''); setDrawer('batch') }}>批量创建文章</Button>
           </div>
           <Table containerClassName="topic-table-wrap" className="topic-table topic-candidate-table" aria-label="选题明细">
               <TableHeader><TableRow>
@@ -295,12 +272,12 @@ export function Topics({ onChoose, onStatus, onOpen, onBatchBusy, drafts }: { on
             <Button variant="ghost" type="button" aria-pressed={taskView === 'done'} onClick={() => setTaskView('done')}>已完成 {completedTasks.length}</Button>
           </div>
           {shownTasks.map(task => {
-            const draft = drafts.find(item => item.id === task.draftId)
+            const draft = drafts.find(item => item.id === task.draftId) ?? (!task.draftId && task.status === 'interrupted' ? drafts.find(item => item.id === task.title) : undefined)
             const batch = data.batches.find(item => item.id === task.batchId)
-            const status = { running: '创作中', done: draft ? '已生成文章' : '文章已删除或尚未刷新', failed: '失败', interrupted: '已中断' }[task.status]
+            const status = { running: task.phase || '创作中', done: draft ? '已生成文章' : '文章已删除或尚未刷新', failed: task.waiting ? '等待处理' : '失败', interrupted: '已中断' }[task.status]
             return <div className="topic-task-row" key={task.id}>
               <div><strong>{task.title}</strong><p>{batch?.batch.request.direction || '选题'} · {status}{task.message ? ` · ${task.message}` : ''}</p></div>
-              {draft && <Button variant="outline" type="button" className="topic-secondary-button" onClick={() => onOpen(draft)}>查看文章</Button>}
+              <div className="topic-task-actions">{task.draftId && (task.status === 'failed' || task.status === 'interrupted') && <Button variant="outline" type="button" disabled={Boolean(retrying)} onClick={() => void retryArticleTask(task.draftId!, false)}>重试</Button>}{task.draftId && task.waiting && <Button variant="outline" type="button" disabled={Boolean(retrying)} onClick={() => void retryArticleTask(task.draftId!, true)}>跳过联网继续</Button>}{draft && <Button variant="outline" type="button" className="topic-secondary-button" onClick={() => onOpen(draft)}>查看文章</Button>}</div>
             </div>
           })}
           {!shownTasks.length && <div className="topic-empty">{taskView === 'active' ? '暂无创作中的任务，勾选选题后创建文章。' : '暂无已完成任务。'}</div>}
@@ -356,15 +333,6 @@ export function Topics({ onChoose, onStatus, onOpen, onBatchBusy, drafts }: { on
           </div>
         </form> : <div className="page-wrap narrow"><Button variant="link" size="xs" className="back-button" onClick={() => setDrawer(null)}><Icon name="back" size={17}/> 返回选题</Button>
           <Card asChild><form className="form-card" onSubmit={event => { event.preventDefault(); void createBatch() }}><fieldset className="settings-fields" disabled={batchBusy}>
-            <section className="create-section"><div className="create-section-title"><span className="create-section-mark"><Icon name="edit" size={15}/></span><h2>创作内容</h2></div>
-              <div className="create-section-fields"><div className="batch-create-list"><div className="batch-create-heading"><strong>文章内容</strong><span>{batchItems.length} 篇</span></div>
-                {batchItems.map((item, position) => <div className="batch-create-item" key={item.index}><span className="batch-create-number">{position + 1}</span><div className="batch-create-item-fields">
-                  <Label className="field"><span>内容主题 <b>*</b></span><Input required maxLength={100} aria-label={`第 ${position + 1} 篇内容主题`} value={item.title} onChange={event => { setBatchError(''); setBatchItems(items => items.map(entry => entry.index === item.index ? { ...entry, title: event.target.value } : entry)) }}/></Label>
-                  <Label className="field"><span>创作角度 <em>选填</em></span><Textarea maxLength={2000} aria-label={`第 ${position + 1} 篇创作角度`} value={item.angle} onChange={event => setBatchItems(items => items.map(entry => entry.index === item.index ? { ...entry, angle: event.target.value } : entry))}/></Label>
-                </div></div>)}
-              </div><Label className="field"><span>本次要求 <em>选填</em></span><Textarea maxLength={2000} value={batchInstruction} placeholder="例如：这篇使用正式、通俗的语言" onChange={event => setBatchInstruction(event.target.value)}/><small>优先于平台规则。</small></Label>
-              <Label className="field"><span>目标受众 <em>选填</em></span><Input maxLength={500} value={batchAudience} placeholder="例如：想了解养老保险的朋友" onChange={event => setBatchAudience(event.target.value)}/></Label></div>
-            </section>
             <PublishSettings selected={chosen} onPlatformsChange={setChosen} generateImages={images} onImagesChange={setImages} imageStyle={style} onImageStyleChange={setStyle} disabled={batchBusy}/>
             {batchError && <p role="alert" className="error">{batchError}</p>}
             <div className="form-actions"><div className="creation-actions"><Button type="submit" className="primary-button" disabled={!chosen.length || batchBusy}>批量生成并保存文案</Button></div></div>

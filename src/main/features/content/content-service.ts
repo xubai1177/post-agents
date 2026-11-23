@@ -10,6 +10,15 @@ import { researchWithModel } from '../../infrastructure/model-search'
 import { createTextModel } from '../../infrastructure/text-model'
 
 const defaults = { research: (topic: string, config: { apiUrl: string; model: string; apiKey: string }) => researchTopic(config, topic, undefined, (c, t) => researchWithModel(c, t, fetch, 'article'), 'article'), saveResearch: savePlatformResearch, createModel: createTextModel }
+function removeLeadingTitle(body: string, titles: string[]): string {
+  const lines = body.trimStart().split(/\r?\n/)
+  const first = lines[0].trim()
+  const heading = /^#\s+(.+?)\s*#*\s*$/.exec(first)
+  const text = (heading?.[1] ?? first.replace(/^#{2,6}\s+/, '')).replace(/^\*\*(.+)\*\*$/, '$1').trim()
+  const isTitle = Boolean(heading) || titles.some(title => title.trim() === text)
+  const remaining = lines.slice(1).join('\n').trimStart()
+  return isTitle && remaining ? remaining : body
+}
 export async function generateContent(request: CreateRequest, config: { draftsDirectory: string; apiUrl: string; model: string; apiKey: string; platformPrompts?: PlatformPrompts; titlePrompts?: PlatformPrompts }, progress: (phase: GenerationProgress) => void, deps: typeof defaults = defaults, existing?: { id: string; versions: Partial<Record<Platform, string>>; expectedTitle?: string | null }): Promise<CreateResult> {
   if (!config.draftsDirectory) throw new Error('请先在设置中选择草稿目录。')
   if (!config.apiUrl || !config.model || !config.apiKey) throw new Error('请先在设置中配置模型地址、模型名称和密钥。')
@@ -44,8 +53,7 @@ export async function generateContent(request: CreateRequest, config: { draftsDi
       for (const platform of request.platforms) {
         const body = reviewed.drafts[platform], title = titles[platform]
         if (!body || !title) continue
-        const lines = body.split('\n')
-        if (lines[0].replace(/^#\s+/, '').trim() === title && /^#\s+/.test(lines[0])) reviewed.drafts[platform] = lines.slice(1).join('\n').trimStart()
+        reviewed.drafts[platform] = removeLeadingTitle(body, [title, ...(existing && 'expectedTitle' in existing ? [request.title] : [])])
       }
       return reviewed
     },

@@ -1,3 +1,7 @@
+import { startBatchArticles, taskWithArticleRun } from '../features/topics/batch-articles'
+import { articleQueue, onArticleQueueChanged } from '../composition'
+import { assertAvailableArticleTitle } from '../features/workspace/workspace-index'
+import { isImageStyle } from '../../shared/image-styles'
 import { ipcMain, shell, type WebContents } from 'electron'
 import { platforms } from '../../shared/drafts'
 import { defaultTopicCount, isTopicCount } from '../../shared/topics'
@@ -27,7 +31,18 @@ export function registerTopics(): void {
     const allowed = allowedSources.get(event.sender.id) ?? new Set<string>()
     for (const record of data.batches) for (const source of record.batch.sources) allowed.add(source.url)
     allowedSources.set(event.sender.id, allowed)
-    return data
+    const runs = await articleQueue.load(await getDraftsDirectory())
+    return { ...data, tasks: data.tasks.map(task => taskWithArticleRun(task, runs)) }
+  }))
+  onArticleQueueChanged(() => { for (const sender of listeners) { if (!sender.isDestroyed()) sender.send('topics:changed') } })
+  ipcMain.handle('topics:start-batch', (event, value: unknown) => respond(event, async () => {
+    if (!value || typeof value !== 'object') throw new Error('选题操作：批量创建参数无效。')
+    const input = value as Record<string, unknown>
+    if (typeof input.batchId !== 'string' || !/^[a-zA-Z0-9-]{1,80}$/.test(input.batchId) || !Array.isArray(input.indexes) || !input.indexes.length || input.indexes.length > 100 || !input.indexes.every(i => Number.isInteger(i) && i >= 0 && i < 100) || new Set(input.indexes).size !== input.indexes.length || !Array.isArray(input.platforms) || !input.platforms.length || !input.platforms.every(p => platforms.includes(p)) || new Set(input.platforms).size !== input.platforms.length || !isImageStyle(input.imageStyle) || typeof input.generateImages !== 'boolean') throw new Error('选题操作：批量创建参数无效。')
+    const root = await getDraftsDirectory()
+    await topicQueue.load(root)
+    track(event.sender)
+    await startBatchArticles(root, { batchId: input.batchId, indexes: input.indexes, platforms: input.platforms, imageStyle: input.imageStyle, generateImages: input.generateImages }, { update: updateTopicWorkspace, start: (dir, options) => articleQueue.start(dir, options), assertTitle: assertAvailableArticleTitle })
   }))
   ipcMain.handle('topics:save-records', (event, value: unknown) => respond(event, async () => {
     try {
