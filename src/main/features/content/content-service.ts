@@ -49,7 +49,7 @@ export async function generateContent(request: CreateRequest, config: { draftsDi
     async (platform) => { const generated = await writeContent(call, request.title, request.audience, platform, plan, sources, config.platformPrompts, request.instruction, config.titlePrompts); titles[platform] = generated.title; initial[platform] = generated.content; return generated.content },
     async (drafts) => {
       progress('review')
-      const reviewed = await reviewVersions(call, drafts, config.platformPrompts, { title: request.title, audience: request.audience, plan, sources, instruction: request.instruction }, (platform, suggestion) => { feedback[platform] = suggestion })
+      const reviewed = await reviewVersions(call, drafts, config.platformPrompts, { title: request.title, audience: request.audience, sources, instruction: request.instruction }, (platform, suggestion) => { feedback[platform] = suggestion })
       for (const platform of request.platforms) {
         const body = reviewed.drafts[platform], title = titles[platform]
         if (!body || !title) continue

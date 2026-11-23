@@ -22,10 +22,10 @@ export async function researchTopic(config: SearchConfig, topic: string, onProgr
     const added = checks.filter(source => !existing.has(source.url)).slice(0, Math.max(0, 10 - sources.length))
     const checkSummary = checks.find(source => source.searchSummary)?.searchSummary
     const checkText = checkSummary || checks.filter(source => source.text).map(source => `${source.title} ${source.url}：${source.text}`).join('\n')
-    if (checkText) sources[0] = { ...sources[0], searchSummary: `【针对原摘要的独立联网复核，仍为模型整理，须核对来源】\n${checkText}\n\n【原始联网综合摘要，可能存在错误或跨期混用】\n${summary}` }
+    if (checkText) sources[0] = { ...sources[0], searchSummary: `【独立联网复核摘要】\n${checkText}\n\n【原始联网综合摘要】\n${summary}` }
     return [...sources, ...added.map(source => ({ ...source, searchSummary: undefined }))]
   } catch {
-    sources[0] = { ...sources[0], searchSummary: `【独立联网复核未完成，以下摘要需逐项核查】\n${summary}` }
+    sources[0] = { ...sources[0], searchSummary: `【原始联网综合摘要，独立联网复核未完成】\n${summary}` }
     return sources
   }
 }
