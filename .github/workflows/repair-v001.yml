@@ -18,10 +18,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = "3b563953d86a76cc5fde7c12ef3c2d8a7d41191c"
+          test "$(git rev-parse HEAD^)" = "70ab2fdc8f04837577fe681ecc31499b4c73ceb0"
           test "$(node -p "require('./package.json').version")" = "0.0.1"
           git tag -f v0.0.1 "$GITHUB_SHA"
-          git push --force-with-lease=refs/tags/v0.0.1:01778c505f6309f42ed058a126996033ac30ffce origin refs/tags/v0.0.1
+          git push --force-with-lease=refs/tags/v0.0.1:11af985baeb33d190d6d3d38d60d3223c584eca4 origin refs/tags/v0.0.1
       - name: Start the release build
         env:
           GH_TOKEN: ${{ github.token }}
