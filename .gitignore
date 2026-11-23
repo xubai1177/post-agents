@@ -2,7 +2,7 @@ node_modules/
 out/
 dist/
 artifacts/
-drafts/
+/drafts/
 *.log
 .DS_Store
 .env
