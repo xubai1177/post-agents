@@ -17,7 +17,7 @@ import { PublishSettings } from './Create'
 
 const empty = (): TopicWorkspace => ({ version: 1, batches: [], tasks: [] })
 const phaseLabels: Record<TopicEvent['phase'], string> = { search: '搜索公开资料', read: '读取来源', generate: '生成候选选题', organize: '整理返回结果' }
-export function Topics({ onChoose, onStatus, onOpen, onBatchBusy, drafts, active }: { onChoose: (candidate: TopicCandidate, batch: TopicBatch) => void; onStatus: (status: string) => void; onOpen: (draft: Draft) => void; onBatchBusy: (busy: boolean) => void; drafts: Draft[]; active: boolean }) {
+export function Topics({ onChoose, onStatus, onOpen, onBatchBusy, drafts, active, availablePlatforms }: { availablePlatforms: Platform[]; onChoose: (candidate: TopicCandidate, batch: TopicBatch) => void; onStatus: (status: string) => void; onOpen: (draft: Draft) => void; onBatchBusy: (busy: boolean) => void; drafts: Draft[]; active: boolean }) {
   const [data, setData] = useState<TopicWorkspace>(empty)
   const dataRef = useRef<TopicWorkspace>(empty())
   const [loaded, setLoaded] = useState(false), [message, setMessage] = useState('')
@@ -73,6 +73,7 @@ export function Topics({ onChoose, onStatus, onOpen, onBatchBusy, drafts, active
   async function submit(event: FormEvent) {
     event.preventDefault()
     if (submitRef.current) return
+    if (!availablePlatforms.length) { setFormError('请先在平台配置中启用支持文章生成的平台。'); return }
     if (!direction.trim()) {
       setFormError('请输入内容方向。')
       directionRef.current?.focus()
@@ -80,7 +81,7 @@ export function Topics({ onChoose, onStatus, onOpen, onBatchBusy, drafts, active
     }
     submitRef.current = true; setSubmitting(true); setFormError(''); onStatus('选题生成中')
     try {
-      const result = await window.topicsApi.start({ direction: direction.trim(), audience: audience.trim(), platforms: [...platforms], count })
+      const result = await window.topicsApi.start({ direction: direction.trim(), audience: audience.trim(), platforms: [...availablePlatforms], count })
       if (!result.ok) { setFormError(result.error); await refreshRecords(); return }
       setDrawer(null); setView('records'); setRecordId(''); setNotice(true)
       await refreshRecords()
@@ -214,7 +215,7 @@ export function Topics({ onChoose, onStatus, onOpen, onBatchBusy, drafts, active
           <div className="topic-batch-heading">
             <div><strong>选题明细</strong><span>已选 {selected.length} 项</span></div>
             <Button type="button" ref={batchButtonRef} className="primary-button" disabled={!selected.length || batchBusy}
-              onClick={() => { setChosen([...platforms]); setImages(false); setStyle(defaultImageStyle); setBatchError(''); setDrawer('batch') }}>批量创建文章</Button>
+              onClick={() => { setChosen([...availablePlatforms]); setImages(false); setStyle(defaultImageStyle); setBatchError(''); setDrawer('batch') }}>批量创建文章</Button>
           </div>
           <Table containerClassName="topic-table-wrap" className="topic-table topic-candidate-table" aria-label="选题明细">
               <TableHeader><TableRow>
@@ -333,7 +334,7 @@ export function Topics({ onChoose, onStatus, onOpen, onBatchBusy, drafts, active
           </div>
         </form> : <div className="page-wrap narrow"><Button variant="link" size="xs" className="back-button" onClick={() => setDrawer(null)}><Icon name="back" size={17}/> 返回选题</Button>
           <Card asChild><form className="form-card" onSubmit={event => { event.preventDefault(); void createBatch() }}><fieldset className="settings-fields" disabled={batchBusy}>
-            <PublishSettings selected={chosen} onPlatformsChange={setChosen} generateImages={images} onImagesChange={setImages} imageStyle={style} onImageStyleChange={setStyle} disabled={batchBusy}/>
+            <PublishSettings availablePlatforms={availablePlatforms} selected={chosen} onPlatformsChange={setChosen} generateImages={images} onImagesChange={setImages} imageStyle={style} onImageStyleChange={setStyle} disabled={batchBusy}/>
             {batchError && <p role="alert" className="error">{batchError}</p>}
             <div className="form-actions"><div className="creation-actions"><Button type="submit" className="primary-button" disabled={!chosen.length || batchBusy}>批量生成并保存文案</Button></div></div>
           </fieldset></form></Card></div>}

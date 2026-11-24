@@ -1,6 +1,6 @@
 import { platforms, type Platform } from '../../../shared/drafts'
 
-export type Page = 'detail' | 'settings' | 'topics'
+export type Page = 'detail' | 'settings' | 'topics' | 'platforms'
 export interface Route { page: Page; draftId: string; platform: Platform | null }
 
 export function parseRoute(hash: string): Route {
@@ -8,7 +8,7 @@ export function parseRoute(hash: string): Route {
   const params = new URLSearchParams(query)
   const platform = params.get('platform')
   return {
-    page: name === 'settings' || name === 'topics' ? name : 'detail',
+    page: name === 'settings' || name === 'topics' || name === 'platforms' ? name : 'detail',
     draftId: params.get('draft') ?? '',
     platform: platforms.find((item) => item === platform) ?? null
   }

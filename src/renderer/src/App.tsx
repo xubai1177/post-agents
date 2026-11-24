@@ -16,8 +16,12 @@ import { Create, type CreateForm } from './features/Create'
 import { Topics } from './features/Topics'
 import type { TopicCandidate, TopicBatch } from '../../shared/topics'
 import { Detail } from './features/Detail'
+import type { PlatformLink } from '../../shared/platform-links'
+import { PlatformSettings } from './features/PlatformSettings'
 import { Settings } from './features/Settings'
 import { prepareArticleOpen } from './features/reopen-article'
+import { FolderContents } from './features/FolderContents'
+import type { WorkspaceIndex } from '../../shared/workspace'
 import { WorkspaceTree } from './features/WorkspaceTree'
 import type { OpenDocument } from './features/types'
 
@@ -29,11 +33,16 @@ export default function App() {
   const { confirm, confirmation } = useConfirmDialog()
   const showMessage = useMessage()
   const [createForm, setCreateForm] = useState<CreateForm>({ title: '', angle: '', audience: '', platforms: [...platforms], imageStyle: defaultImageStyle, generateImages: false })
+  const [availablePlatforms, setAvailablePlatforms] = useState<Platform[]>([...platforms])
+  function applyPlatformLinks(links: PlatformLink[]) { setAvailablePlatforms(platforms.filter(platform => links.some(link => link.name === platform && link.enabled !== false))) }
+  useEffect(() => { void window.settingsApi.load().then(result => { if (result.ok) applyPlatformLinks(result.value.platformLinks); else showMessage(result.error, true) }).catch(() => showMessage('无法读取平台配置。', true)) }, [])
   const [createDirty, setCreateDirty] = useState(false)
   const [newFolderRequest, setNewFolderRequest] = useState(0)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [articleFolderId, setArticleFolderId] = useState<string | null>(null)
   const [treeVersion, setTreeVersion] = useState(0)
+  const [folderId, setFolderId] = useState<string | null>(null)
+  const [folderIndex, setFolderIndex] = useState<WorkspaceIndex>({ version: 1, folders: [], assignments: {}, titles: {}, imageStyles: {} })
   const drawerOrigin = useRef<HTMLElement | null>(null)
   const newMenuRef = useRef<HTMLDivElement>(null)
   const [topicStatus, setTopicStatus] = useState('')
@@ -91,9 +100,9 @@ export default function App() {
     } catch { setStatus('无法读取工作空间，请检查设置和目录权限。') } finally { setLoading(false) }
   }
   useEffect(() => { void refresh() }, [])
-  function openCreate(folderId: string | null) {
+  function openCreate(folderId: string | null, fromTopic = false) {
     drawerOrigin.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    setCreateForm(current => ({ ...current, generateImages: false, imageStyle: defaultImageStyle }))
+    setCreateForm(current => ({ ...current, platforms: fromTopic ? current.platforms.filter(p => availablePlatforms.includes(p)) : createDirty ? current.platforms.filter(p => availablePlatforms.includes(p)) : [...availablePlatforms], generateImages: false, imageStyle: defaultImageStyle }))
     setArticleFolderId(folderId); setStatus(''); setResearchFailed(false); setDrawerOpen(true)
   }
   useEffect(() => {
@@ -179,7 +188,7 @@ export default function App() {
     try {
       await prepareArticleOpen(selectedId, draft, { getDocuments: () => documentsRef.current, updateDocuments, save: window.draftsApi.save, read: window.draftsApi.read, isLocked: key => regeneratingRef.current.has(`${workspaceVersionRef.current}:${key}`) })
       const nextPlatform = requestedPlatform && draft.platforms.includes(requestedPlatform) ? requestedPlatform : draft.id === selectedId && draft.platforms.includes(selectedPlatform) ? selectedPlatform : draft.platforms[0]
-      setSelectedId(draft.id); setSelectedPlatform(nextPlatform); setEditorVersion((value) => value + 1)
+      setFolderId(null); setSelectedId(draft.id); setSelectedPlatform(nextPlatform); setEditorVersion((value) => value + 1)
       if (!fromHistory) navigate('detail', draft.id, nextPlatform)
       return true
     } catch (error) { setStatus(error instanceof Error ? error.message : '无法保存或重新读取文章，请检查工作空间后重试。'); return false }
@@ -364,9 +373,9 @@ export default function App() {
       action: '替换表单',
     }))) return
     setCreateForm({ title: candidate.title, angle: candidate.angle, audience: batch.request.audience, platforms: [...batch.request.platforms], imageStyle: defaultImageStyle, generateImages: false, reference: { skipped: batch.skipped, sources: batch.sources } })
-    setCreateDirty(false); openCreate(null)
+    setCreateDirty(false); openCreate(null, true)
   }
-  return <div className="app-shell notes-shell"><nav className="workspace-rail" aria-label="工作区导航"><div className="rail-brand" aria-label="灵稿 AI"><img src={logoUrl} alt=""/><span aria-hidden="true">灵稿 AI</span></div><Button variant="ghost" type="button" title="内容工作区" aria-label="内容工作区" aria-current={page === 'detail' ? 'page' : undefined} disabled={busy} onClick={() => navigate('detail')}><Icon name="file" size={19}/><span>文章</span></Button><Button variant="ghost" type="button" title="选题工作台" aria-label="选题工作台" aria-current={page === 'topics' ? 'page' : undefined} disabled={busy} onClick={async () => { if (page !== 'detail' || await discardCurrentDocument()) navigate('topics') }}><Icon name="bulb" size={19}/><span>选题</span></Button><Button variant="ghost" type="button" className="rail-settings" title="设置" aria-label="设置" aria-current={page === 'settings' ? 'page' : undefined} disabled={busy} onClick={openSettings}><Icon name="settings" size={19}/><span>设置</span></Button></nav><aside className="notes-sidebar" hidden={page !== 'detail'}><div className="notes-list-header"><h2>内容工作区</h2><div className="new-content-menu" ref={newMenuRef}>
+  return <div className="app-shell notes-shell"><nav className="workspace-rail" aria-label="工作区导航"><div className="rail-brand" aria-label="灵稿 AI"><img src={logoUrl} alt=""/><span aria-hidden="true">灵稿 AI</span></div><Button variant="ghost" type="button" title="内容工作区" aria-label="内容工作区" aria-current={page === 'detail' ? 'page' : undefined} disabled={busy} onClick={() => { setFolderId(null); navigate('detail') }}><Icon name="file" size={19}/><span>文章</span></Button><Button variant="ghost" type="button" title="选题工作台" aria-label="选题工作台" aria-current={page === 'topics' ? 'page' : undefined} disabled={busy} onClick={async () => { if (page !== 'detail' || await discardCurrentDocument()) navigate('topics') }}><Icon name="bulb" size={19}/><span>选题</span></Button><Button variant="ghost" type="button" title="平台配置" aria-label="平台配置" aria-current={page === 'platforms' ? 'page' : undefined} disabled={busy} onClick={async () => { if (page !== 'detail' || await discardCurrentDocument()) navigate('platforms') }}><Icon name="grid" size={19}/><span>平台</span></Button><Button variant="ghost" type="button" className="rail-settings" title="设置" aria-label="设置" aria-current={page === 'settings' ? 'page' : undefined} disabled={busy} onClick={openSettings}><Icon name="settings" size={19}/><span>设置</span></Button></nav><aside className="notes-sidebar" hidden={page !== 'detail'}><div className="notes-list-header"><h2>内容工作区</h2><div className="new-content-menu" ref={newMenuRef}>
       <DropdownMenu modal={false}>
         <DropdownMenuTrigger asChild>
           <Button variant="ghost" size="icon-sm" aria-label="新建" title="新建" disabled={busy}><Icon name="plus" /></Button>
@@ -376,12 +385,13 @@ export default function App() {
           <DropdownMenuItem onSelect={() => openCreate(null)}>新建文章</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-    </div></div><section className="notes-list" aria-label="内容目录"><WorkspaceTree createRequest={newFolderRequest} drafts={drafts} articleRuns={articleRuns} selectedId={page === 'detail' ? selectedId : ''} selectedPlatform={selectedPlatform} platformTitles={platformTitles} enabled={!busy} refreshKey={workspaceVersion + treeVersion} onOpen={(draft, platform) => { void openDraft(draft, platform) }} onCreateArticle={openCreate} onDeleteArticle={deleteArticle} /></section><div className="notes-sidebar-bottom"><div className="notes-demo"><span className="status-dot"/> 本地工作区</div></div></aside>
+    </div></div><section className="notes-list" aria-label="内容目录"><WorkspaceTree key={workspaceVersion} selectedFolderId={page === 'detail' ? folderId : null} onIndexChange={setFolderIndex} onOpenFolder={id => { void (async () => { if (await discardCurrentDocument()) setFolderId(id) })() }} createRequest={newFolderRequest} drafts={drafts} articleRuns={articleRuns} selectedId={page === 'detail' && !folderId ? selectedId : ''} selectedPlatform={selectedPlatform} platformTitles={platformTitles} enabled={!busy} refreshKey={treeVersion} onOpen={(draft, platform) => { void openDraft(draft, platform) }} onCreateArticle={openCreate} onDeleteArticle={deleteArticle} /></section><div className="notes-sidebar-bottom"><div className="notes-demo"><span className="status-dot"/> 本地工作区</div></div></aside>
     <div className="notes-main"><main className={`notes-content ${page === 'detail' ? 'notes-content-detail' : page === 'topics' ? 'notes-content-topics' : ''}`}>
     {status && <Alert className="app-status block" role="status">{status}{page === 'detail' && (status.includes('自动保存失败') || status === '平台标题不能为空。') && <Button variant="link" size="xs" type="button" onClick={() => void (async () => { if (await discardCurrentDocument()) setStatus('') })()}>重试保存</Button>}</Alert>}
-    <div hidden={page !== 'topics'}><Topics key={workspaceVersion} active={page === 'topics'} onChoose={chooseTopic} onStatus={setTopicStatus} onOpen={(draft) => { void openDraft(draft) }} onBatchBusy={(value) => { setBatchBusy(value); if (!value) void refresh() }} drafts={drafts} /></div>
-    {page === 'detail' && selectedRun && selectedRun.status !== 'done' && <Alert className="app-status block" role="status">{selectedRun.status === 'queued' ? '文章正在排队等待生成。' : selectedRun.status === 'running' ? (selectedRun.phase === 'images' && selectedRun.imageProgress ? selectedRun.imageProgress : `文章生成中：${({ research: '检索资料', plan: '规划内容', write: '撰写文案', review: '检查内容', save: '保存文章', images: '生成配图' } as const)[selectedRun.phase ?? 'research']}…`) : (selectedRun.message || '文章生成未完成。')}{['failed', 'waiting', 'interrupted'].includes(selectedRun.status) && <Button variant="link" size="xs" type="button" className="reload-button" onClick={() => void retryArticle(selectedRun.id, false)}>重试</Button>}{selectedRun.status === 'waiting' && <Button variant="link" size="xs" type="button" className="reload-button" onClick={() => void retryArticle(selectedRun.id, true)}>跳过联网继续</Button>}</Alert>}
-    {page === 'detail' && (loading ? <div className="empty-state" role="status">正在读取文章…</div> : selectedDraft && current ? <Detail key={`${editorVersion}:${docKey}:${regenerationVersions[docKey] ?? 0}`} platformTitle={platformTitles[docKey]?.value ?? null} onPlatformTitleChange={(value) => updatePlatformTitles(all => all[docKey] ? { ...all, [docKey]: { ...all[docKey], value } } : all)} draft={displayedDraft ?? selectedDraft} selectedPlatform={selectedPlatform} document={current} editorBusy={busy || generatingArticle || regeneratingHere} onImageBusy={setOperationBusy} imageStyle={articleStyles[selectedDraft.id] ?? defaultImageStyle} onStyleSave={(style) => saveImageStyle(selectedDraft.id, style)} onDocumentChange={(value) => updateDocuments((all) => ({ ...all, [docKey]: { ...all[docKey], content: value } }))} onRegenerate={() => void regenerateCurrent()} regenerating={regeneratingHere} /> : selectedDraft ? <div className="empty-state" role="status">正在读取文案…</div> :
+    <div hidden={page !== 'topics'}><Topics availablePlatforms={availablePlatforms} key={workspaceVersion} active={page === 'topics'} onChoose={chooseTopic} onStatus={setTopicStatus} onOpen={(draft) => { void openDraft(draft) }} onBatchBusy={(value) => { setBatchBusy(value); if (!value) void refresh() }} drafts={drafts} /></div>
+    {page === 'detail' && !folderId && selectedRun && selectedRun.status !== 'done' && <Alert className="app-status block" role="status">{selectedRun.status === 'queued' ? '文章正在排队等待生成。' : selectedRun.status === 'running' ? (selectedRun.phase === 'images' && selectedRun.imageProgress ? selectedRun.imageProgress : `文章生成中：${({ research: '检索资料', plan: '规划内容', write: '撰写文案', review: '检查内容', save: '保存文章', images: '生成配图' } as const)[selectedRun.phase ?? 'research']}…`) : (selectedRun.message || '文章生成未完成。')}{['failed', 'waiting', 'interrupted'].includes(selectedRun.status) && <Button variant="link" size="xs" type="button" className="reload-button" onClick={() => void retryArticle(selectedRun.id, false)}>重试</Button>}{selectedRun.status === 'waiting' && <Button variant="link" size="xs" type="button" className="reload-button" onClick={() => void retryArticle(selectedRun.id, true)}>跳过联网继续</Button>}</Alert>}
+    {page === 'detail' && folderId && <FolderContents folderId={folderId} index={folderIndex} drafts={drafts} onOpenFolder={setFolderId} onOpenArticle={(draft, platform) => void openDraft(draft, platform)}/>}
+    {page === 'detail' && !folderId && (loading ? <div className="empty-state" role="status">正在读取文章…</div> : selectedDraft && current ? <Detail key={`${editorVersion}:${docKey}:${regenerationVersions[docKey] ?? 0}`} platformTitle={platformTitles[docKey]?.value ?? null} onPlatformTitleChange={(value) => updatePlatformTitles(all => all[docKey] ? { ...all, [docKey]: { ...all[docKey], value } } : all)} draft={displayedDraft ?? selectedDraft} selectedPlatform={selectedPlatform} document={current} editorBusy={busy || generatingArticle || regeneratingHere} onImageBusy={setOperationBusy} imageStyle={articleStyles[selectedDraft.id] ?? defaultImageStyle} onStyleSave={(style) => saveImageStyle(selectedDraft.id, style)} onDocumentChange={(value) => updateDocuments((all) => ({ ...all, [docKey]: { ...all[docKey], content: value } }))} onRegenerate={() => void regenerateCurrent()} regenerating={regeneratingHere} /> : selectedDraft ? <div className="empty-state" role="status">正在读取文案…</div> :
       <Card asChild><section className="workspace-empty">
         <div className="workspace-empty-mark"><Icon name="edit" size={26}/></div>
         <h2>{drafts.length ? '打开一篇文章' : '从第一篇文章开始'}</h2>
@@ -389,7 +399,8 @@ export default function App() {
         <div><Button type="button" className="primary-button" disabled={busy} onClick={() => openCreate(null)}>新建文章</Button>
         <Button variant="outline" type="button" className="article-secondary-button" disabled={busy} onClick={() => navigate('topics')}>去选题工作台</Button></div>
       </section></Card>)}
-    {page === 'settings' && <Settings key={workspaceVersion} workspaceLocked={topicStatus === '选题生成中' || articleRuns.some(run => run.status === 'queued' || run.status === 'running')} onSaved={(directoryChanged) => { if (directoryChanged) { workspaceVersionRef.current += 1; setRegenerationVersions({}); updateDocuments(() => ({})); updatePlatformTitles(() => ({})); setArticleTitles({}); setArticleStyles({}); setTopicStatus(''); setCreateForm({ title: '', angle: '', audience: '', platforms: [...platforms], imageStyle: defaultImageStyle, generateImages: false }); setCreateDirty(false); setWorkspaceVersion((value) => value + 1) }; void refresh() }} />}
+    <div hidden={page !== 'platforms'}><PlatformSettings onSaved={applyPlatformLinks} /></div>
+    {page === 'settings' && <Settings key={workspaceVersion} workspaceLocked={topicStatus === '选题生成中' || articleRuns.some(run => run.status === 'queued' || run.status === 'running')} onSaved={(directoryChanged) => { if (directoryChanged) { setFolderId(null); workspaceVersionRef.current += 1; setRegenerationVersions({}); updateDocuments(() => ({})); updatePlatformTitles(() => ({})); setArticleTitles({}); setArticleStyles({}); setTopicStatus(''); setCreateForm({ title: '', angle: '', audience: '', platforms: [...platforms], imageStyle: defaultImageStyle, generateImages: false }); setCreateDirty(false); setWorkspaceVersion((value) => value + 1) }; void refresh() }} />}
     </main></div>
     <Sheet open={drawerOpen} onOpenChange={open => { if (!operationBusy) setDrawerOpen(open) }}>
       <SheetContent className="create-drawer article-create-drawer max-w-none gap-0 sm:max-w-none" showCloseButton={false}
@@ -408,7 +419,7 @@ export default function App() {
             onClick={() => setDrawerOpen(false)}><Icon name="close" /></Button>
         </div>
         {status && <Alert className="app-status block" role="status">{status}</Alert>}
-        <Create form={createForm} onChange={form => { setCreateForm(form); setCreateDirty(true) }}
+        <Create availablePlatforms={availablePlatforms} form={createForm} onChange={form => { setCreateForm(form); setCreateDirty(true) }}
           onBack={() => setDrawerOpen(false)} onCreate={createDraft}
           busy={operationBusy} researchFailed={researchFailed} progress={progress} imageProgress={imageProgress}/>
       </SheetContent>

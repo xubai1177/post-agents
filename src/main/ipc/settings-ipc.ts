@@ -1,10 +1,19 @@
-import { BrowserWindow, dialog, ipcMain } from 'electron'
+import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { stat } from 'node:fs/promises'
-import { getCustomImageApiKey, getRuntimeSettings, loadSettings, recordDirectorySelection, saveSettings } from '../features/settings/settings'
+import { getCustomImageApiKey, getRuntimeSettings, loadSettings, recordDirectorySelection, savePlatformConfig, saveSettings } from '../features/settings/settings'
 import { respond } from './security'
 import { fetchModelList } from '../infrastructure/model-list'
 
 export function registerSettings(): void {
+  ipcMain.handle('settings:open-platform', (event, name: unknown) => respond(event, async () => {
+    if (typeof name !== 'string' || name.length > 50) throw new Error('invalid platform')
+    const settings = await loadSettings(undefined)
+    const link = settings.platformLinks.find(item => item.name === name)
+    if (!link?.url || link.enabled === false) throw new Error('invalid platform link')
+    const url = new URL(link.url)
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('invalid platform link')
+    await shell.openExternal(url.href)
+  }))
   ipcMain.handle('settings:list-models', (event, input: unknown) => respond(event, async () => {
     if (!input || typeof input !== 'object' || !('apiUrl' in input) || typeof input.apiUrl !== 'string' || !('service' in input) || (input.service !== 'text' && input.service !== 'image') || !('apiKey' in input) || !input.apiKey || typeof input.apiKey !== 'object' || !('action' in input.apiKey)) throw new Error('模型列表：请求无效。')
     const key = input.apiKey
@@ -24,5 +33,6 @@ export function registerSettings(): void {
     recordDirectorySelection(event.sender.id, selected)
     return selected
   }))
+  ipcMain.handle('settings:save-platform-config', (event, config: unknown) => respond(event, () => savePlatformConfig(config)))
   ipcMain.handle('settings:save', (event, update: unknown) => respond(event, () => saveSettings(event.sender.id, update)))
 }

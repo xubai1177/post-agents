@@ -3,7 +3,7 @@ import { lstat, mkdtemp, readFile, rename, rm, rmdir, writeFile } from 'node:fs/
 import { join } from 'node:path'
 import { isImageStyle } from '../../../shared/image-styles'
 import type { ImageStyle } from '../../../shared/image-styles'
-import type { DeleteArticleResult, WorkspaceChange, WorkspaceFolder, WorkspaceIndex } from '../../../shared/workspace'
+import { isWorkspaceNodeId, workspaceChildren, type DeleteArticleResult, type WorkspaceChange, type WorkspaceFolder, type WorkspaceIndex, type WorkspaceNodeId } from '../../../shared/workspace'
 import { listDrafts, safeTitle } from '../drafts/draft-store'
 
 const fileName = '.post-agents-workspace.json'
@@ -49,7 +49,12 @@ function validate(value: unknown): WorkspaceIndex {
     if (!input.imageStyles || typeof input.imageStyles !== 'object' || Array.isArray(input.imageStyles)) return invalid()
     for (const [id, style] of Object.entries(input.imageStyles)) { if (!id || !isImageStyle(style)) return invalid(); imageStyles[id] = style }
   }
-  return { version: 1, folders, assignments, titles, imageStyles }
+  let order: WorkspaceNodeId[] | undefined
+  if (input.order !== undefined) {
+    if (!Array.isArray(input.order) || !input.order.every(isWorkspaceNodeId)) return invalid()
+    order = [...new Set(input.order)]
+  }
+  return { version: 1, folders, assignments, titles, imageStyles, ...(order && { order }) }
 }
 export async function readWorkspaceIndex(root: string): Promise<WorkspaceIndex> {
   if (!root) throw new Error('请先在设置中选择草稿目录。')
@@ -61,6 +66,9 @@ export async function readWorkspaceIndex(root: string): Promise<WorkspaceIndex> 
 export function changeWorkspaceIndex(root: string, change: WorkspaceChange): Promise<WorkspaceIndex> {
   const pending = queue.then(() => changeExclusive(root, change)); queue = pending.catch(() => undefined); return pending
 }
+function removeFromOrder(index: WorkspaceIndex, removed: ReadonlySet<WorkspaceNodeId>): void {
+  if (index.order) index.order = index.order.filter(id => !removed.has(id))
+}
 async function changeExclusive(root: string, change: WorkspaceChange): Promise<WorkspaceIndex> {
   const index = await readWorkspaceIndex(root)
   const getFolder = (id: string) => { const folder = index.folders.find((item) => item.id === id); if (!folder) throw new Error('目录不存在。'); return folder }
@@ -68,7 +76,23 @@ async function changeExclusive(root: string, change: WorkspaceChange): Promise<W
   const unique = (parent: string | null, value: string, except?: string) => { if (index.folders.some((item) => item.parentId === parent && item.name === value && item.id !== except)) throw new Error('同级目录名称已存在。') }
   if (change.type === 'create') { if (change.parentId !== null) getFolder(change.parentId); const value = name(change.name); unique(change.parentId, value); index.folders.push({ id: randomUUID(), name: value, parentId: change.parentId }) }
   else if (change.type === 'rename') { const folder = getFolder(change.id), value = name(change.name); unique(folder.parentId, value, folder.id); folder.name = value }
-  else if (change.type === 'delete') { getFolder(change.id); const removed = new Set([change.id]); let count = 0; do { count = removed.size; for (const folder of index.folders) if (folder.parentId && removed.has(folder.parentId)) removed.add(folder.id) } while (count !== removed.size); index.folders = index.folders.filter((folder) => !removed.has(folder.id)); for (const [id, folder] of Object.entries(index.assignments)) if (removed.has(folder)) delete index.assignments[id] }
+  else if (change.type === 'delete') {
+    getFolder(change.id)
+    const removed = new Set([change.id])
+    let count: number
+    do {
+      count = removed.size
+      for (const folder of index.folders) if (folder.parentId && removed.has(folder.parentId)) removed.add(folder.id)
+    } while (count !== removed.size)
+    index.folders = index.folders.filter(folder => !removed.has(folder.id))
+    const detached = new Set([...removed].map<WorkspaceNodeId>(id => `folder:${id}`))
+    for (const [id, folder] of Object.entries(index.assignments)) {
+      if (!removed.has(folder)) continue
+      delete index.assignments[id]
+      detached.add(`article:${id}`)
+    }
+    removeFromOrder(index, detached)
+  }
   else if (change.type === 'setImageStyle') { if (!isImageStyle(change.style) || !(await listDrafts(root)).some((item) => item.id === change.draftId)) throw new Error('文章或图片风格无效。'); index.imageStyles[change.draftId] = change.style }
   else if (change.type === 'renameArticle') {
     const drafts = await listDrafts(root), draft = drafts.find((item) => item.id === change.draftId)
@@ -83,6 +107,7 @@ async function changeExclusive(root: string, change: WorkspaceChange): Promise<W
   else if (change.type === 'moveDraft') {
     const drafts = await listDrafts(root)
     if (!drafts.some((item) => item.id === change.draftId)) throw new Error('草稿不存在。')
+    const previousParent = index.assignments[change.draftId] ?? null
     if (change.folderId === null) delete index.assignments[change.draftId]
     else {
       if (!index.folders.some(item => item.id === change.folderId) && !drafts.some(item => item.id === change.folderId)) throw new Error('目标文章不存在。')
@@ -95,6 +120,18 @@ async function changeExclusive(root: string, change: WorkspaceChange): Promise<W
       }
       index.assignments[change.draftId] = change.folderId
     }
+    if (previousParent !== change.folderId) removeFromOrder(index, new Set<WorkspaceNodeId>([`article:${change.draftId}`]))
+  }
+  else if (change.type === 'reorder') {
+    const siblings = workspaceChildren(index, await listDrafts(root), change.parentId).map(node => node.id)
+    if (!siblings.includes(change.node) || !siblings.includes(change.target)) throw new Error('只能调整同级目录项的顺序。')
+    if (change.node === change.target) return index
+    const reordered = siblings.filter(id => id !== change.node)
+    const offset = change.position === 'after' ? 1 : 0
+    reordered.splice(reordered.indexOf(change.target) + offset, 0, change.node)
+    if (reordered.every((id, position) => id === siblings[position])) return index
+    const siblingIds = new Set(siblings)
+    index.order = [...(index.order ?? []).filter(id => !siblingIds.has(id)), ...reordered]
   }
   else throw new Error('目录操作无效。')
   await writeWorkspaceIndex(root, index)
@@ -130,13 +167,16 @@ async function deleteArticleExclusive(root: string, id: string, deps: DeleteDepe
     throw new Error('文章在删除期间发生变化，未执行删除。')
   }
   const parent = index.assignments[id]
+  const detached = new Set<WorkspaceNodeId>([`article:${id}`])
   for (const [child, assignedParent] of Object.entries(index.assignments)) {
     if (assignedParent === id) {
       if (parent) index.assignments[child] = parent
       else delete index.assignments[child]
+      detached.add(`article:${child}`)
     }
   }
   delete index.assignments[id]; delete index.titles[id]; delete index.imageStyles[id]
+  removeFromOrder(index, detached)
   try { await deps.writeIndex(root, index) } catch {
     try { await restoreArticle() } catch (error) { throw new Error(`删除未完成：${error instanceof Error ? error.message : '请检查临时目录。'}`) }
     throw new Error('删除未完成，文章及其资源已保留。')

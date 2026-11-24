@@ -4,7 +4,7 @@ import { join, relative, sep } from 'node:path'
 import { createBackup, decodeBackup, restoreBackup, writeBackupExclusive } from '../features/workspace/backup'
 import { settingsForBackup, switchWorkspace, restoreWorkspaceSettings } from '../features/settings/settings'
 import { isImageStyle } from '../../shared/image-styles'
-import type { WorkspaceChange } from '../../shared/workspace'
+import { isWorkspaceNodeId, type WorkspaceChange } from '../../shared/workspace'
 import { getDraftsDirectory } from '../features/settings/settings'
 import { changeWorkspaceIndex, deleteWorkspaceArticle, readWorkspaceIndex } from '../features/workspace/workspace-index'
 import { respond } from './security'
@@ -20,13 +20,17 @@ function validate(value: unknown): value is WorkspaceChange {
   if (change.type === 'setImageStyle') return str(change.draftId) && isImageStyle(change.style)
   if (change.type === 'renameArticle') return str(change.draftId) && str(change.title) && str(change.expectedTitle)
   if (change.type === 'moveDraft') return str(change.draftId) && (change.folderId === null || str(change.folderId))
+  if (change.type === 'reorder') return (change.parentId === null || str(change.parentId)) && isWorkspaceNodeId(change.node) && isWorkspaceNodeId(change.target) && (change.position === 'before' || change.position === 'after')
   return false
 }
 function validName(value: unknown): value is string { return typeof value === 'string' && value.trim() === value && value.length > 0 && value.length <= 100 && value !== '.' && value !== '..' && !/[\\/:*?"<>|\x00-\x1f]/.test(value) && !/[. ]$/.test(value) }
 function validPassword(value: unknown): value is string { return typeof value === 'string' && value.length >= 8 && value.length <= 1024 }
 function inside(root: string, file: string): boolean { const path = relative(root, file); return path === '' || (path !== '..' && !path.startsWith(`..${sep}`) && !path.startsWith(sep)) }
 export function registerWorkspace(): void {
-  ipcMain.handle('workspace:read', (event) => respond(event, async () => readWorkspaceIndex(await getDraftsDirectory())))
+  ipcMain.handle('workspace:read', (event) => respond(event, async () => {
+    const directory = await getDraftsDirectory()
+    return { ...await readWorkspaceIndex(directory), directory }
+  }))
   ipcMain.handle('workspace:delete-article', (event, id: unknown) => respond(event, async () => {
     if (typeof id !== 'string' || !id || id.length > 255) throw new Error('工作空间操作：文章路径无效。')
     try { const root = await getDraftsDirectory(); if (articleQueue.isActive(root, id)) throw new Error('文章正在生成，请完成后再删除。'); return await deleteWorkspaceArticle(root, id) } catch (error) { throw new Error(`工作空间操作：${error instanceof Error ? error.message : '删除文章失败。'}`) }

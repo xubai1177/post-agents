@@ -8,6 +8,8 @@ import type { WorkspaceApi } from '../shared/workspace'
 
 const settings: SettingsApi = {
   load: (legacy) => ipcRenderer.invoke('settings:load', legacy),
+  savePlatformConfig: (config) => ipcRenderer.invoke('settings:save-platform-config', config),
+  openPlatform: (name) => ipcRenderer.invoke('settings:open-platform', name),
   save: (value) => ipcRenderer.invoke('settings:save', value),
   chooseDirectory: () => ipcRenderer.invoke('settings:choose-directory'),
   listModels: (request) => ipcRenderer.invoke('settings:list-models', request)

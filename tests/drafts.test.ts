@@ -316,6 +316,35 @@ test('工作空间目录支持嵌套、分类和删除后保留草稿', () => wi
   assert.deepEqual((await readWorkspaceIndex(root)).folders, [])
 }))
 
+test('同级文件夹与文章可混排，顺序持久保存，跨级排序被拒绝', () => withRoot(async (root) => {
+  const { changeWorkspaceIndex, readWorkspaceIndex, deleteWorkspaceArticle } = await import('../src/main/features/workspace/workspace-index')
+  const { workspaceChildren } = await import('../src/shared/workspace')
+  const draftId = await createTopic(root, '第一篇文章')
+  await createPlatform(root, draftId, '小红书', '正文')
+  const drafts = await listDrafts(root)
+  const first = (await changeWorkspaceIndex(root, { type: 'create', name: '甲', parentId: null })).folders[0].id
+  const second = (await changeWorkspaceIndex(root, { type: 'create', name: '乙', parentId: null })).folders[1].id
+  const child = (await changeWorkspaceIndex(root, { type: 'create', name: '子目录', parentId: first })).folders[2].id
+  const ids = (index: Awaited<ReturnType<typeof readWorkspaceIndex>>, parent: string | null = null) =>
+    workspaceChildren(index, drafts, parent).map(node => node.id)
+  const article = `article:${draftId}` as const
+  assert.deepEqual(ids(await readWorkspaceIndex(root)), [`folder:${first}`, `folder:${second}`, article])
+  await changeWorkspaceIndex(root, { type: 'reorder', parentId: null, node: article, target: `folder:${first}`, position: 'before' })
+  await changeWorkspaceIndex(root, { type: 'reorder', parentId: null, node: `folder:${second}`, target: article, position: 'before' })
+  await assert.rejects(changeWorkspaceIndex(root, { type: 'reorder', parentId: null, node: `folder:${child}`, target: article, position: 'after' }), /同级/)
+  await changeWorkspaceIndex(root, { type: 'rename', id: second, name: '改名后的乙' })
+  let index = await readWorkspaceIndex(root)
+  assert.deepEqual(ids(index), [`folder:${second}`, article, `folder:${first}`])
+  assert.deepEqual(ids(index, first), [`folder:${child}`])
+  await changeWorkspaceIndex(root, { type: 'moveDraft', draftId, folderId: first })
+  index = await changeWorkspaceIndex(root, { type: 'reorder', parentId: first, node: article, target: `folder:${child}`, position: 'before' })
+  assert.deepEqual(ids(index, first), [article, `folder:${child}`])
+  assert.deepEqual(ids(index), [`folder:${second}`, `folder:${first}`])
+  await deleteWorkspaceArticle(root, draftId)
+  index = await changeWorkspaceIndex(root, { type: 'delete', id: first })
+  assert.deepEqual(index.order, [`folder:${second}`])
+}))
+
 test('加密备份完整恢复文件，错误密码与篡改不能读取', () => withRoot(async (root) => {
   const { createBackup, decodeBackup, restoreBackup } = await import('../src/main/features/workspace/backup')
   const source = join(root, 'source'), destination = join(root, 'destination')
@@ -534,9 +563,9 @@ test('新建文章默认不生成配图，勾选后显示四种风格预览', as
   const { renderToStaticMarkup } = await import('react-dom/server')
   const { Create } = await import('../src/renderer/src/features/Create')
   const base = { title: '', angle: '', audience: '', platforms: ['小红书' as const], imageStyle: 'flat' as const, generateImages: false }
-  const props = { onChange: () => {}, onBack: () => {}, onCreate: async () => null, busy: false, researchFailed: false, progress: null, imageProgress: '' }
+  const props = { availablePlatforms: ['小红书' as const], onChange: () => {}, onBack: () => {}, onCreate: async () => null, busy: false, researchFailed: false, progress: null, imageProgress: '' }
   const initial = renderToStaticMarkup(createElement(Create, { ...props, form: base }))
-  assert.match(initial, /type="checkbox"/); assert.doesNotMatch(initial, /class="image-style-card"/)
+  assert.match(initial, /type="checkbox"/); assert.doesNotMatch(initial, /class="image-style-card"/); assert.match(initial, /小红书/); assert.doesNotMatch(initial, /公众号/)
   const selected = renderToStaticMarkup(createElement(Create, { ...props, form: { ...base, generateImages: true } }))
   assert.equal((selected.match(/class="image-style-card"/g) ?? []).length, 4)
   assert.match(selected, /清新扁平/); assert.match(selected, /手绘插画/); assert.match(selected, /水彩/); assert.match(selected, /极简信息图/)
@@ -1124,4 +1153,17 @@ test('批量文章交给后台队列并根据文章任务展示最新状态', as
   assert.equal(taskWithArticleRun(data.tasks[0], [{ ...run, status: 'done' }]).status, 'done')
   assert.equal(taskWithArticleRun(data.tasks[0], [{ ...run, status: 'waiting' }]).waiting, true)
   assert.equal(taskWithArticleRun(data.tasks[0], []).status, 'interrupted')
+})
+
+test('平台链接校验内置平台、自定义名称和安全的网页地址', async () => {
+  const { defaultPlatformLinks, validPlatformLinks } = await import('../src/shared/platform-links')
+  const builtins = defaultPlatformLinks()
+  assert.equal(validPlatformLinks(builtins), true)
+  assert.equal(validPlatformLinks(builtins.map((item, index) => ({ ...item, enabled: index !== 0 }))), true)
+  assert.equal(validPlatformLinks([...builtins, { name: '知乎', url: '', enabled: 'no' }]), false)
+  assert.equal(validPlatformLinks([...builtins, { name: '知乎', url: 'https://www.zhihu.com/' }]), true)
+  assert.equal(validPlatformLinks([...builtins, { name: '小红书', url: '' }]), false)
+  assert.equal(validPlatformLinks([...builtins, { name: '知乎', url: 'javascript:alert(1)' }]), false)
+  assert.equal(validPlatformLinks([...builtins, { name: '知乎', url: 'https://user:pass@example.com/' }]), false)
+  assert.equal(validPlatformLinks(builtins.slice(1)), false)
 })

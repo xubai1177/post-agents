@@ -1,3 +1,4 @@
+import type { PlatformLink } from './platform-links'
 import type { PlatformPrompts } from './platform-prompts'
 
 export const themePresets = [
@@ -34,6 +35,7 @@ export interface AppSettings {
   hasImageApiKey: boolean
   platformPrompts: PlatformPrompts
   titlePrompts: PlatformPrompts
+  platformLinks: PlatformLink[]
 }
 export type KeyChange = { action: 'keep' } | { action: 'replace'; value: string } | { action: 'clear' }
 export interface SettingsUpdate {
@@ -50,6 +52,7 @@ export interface SettingsUpdate {
   imageApiKey: KeyChange
   platformPrompts?: PlatformPrompts
   titlePrompts?: PlatformPrompts
+  platformLinks?: PlatformLink[]
 }
 export interface LegacySettings { apiUrl: string; model: string }
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string; code?: 'RESEARCH_UNAVAILABLE' }
@@ -58,4 +61,6 @@ export interface SettingsApi {
   save: (settings: SettingsUpdate) => Promise<Result<AppSettings>>
   listModels: (request: { apiUrl: string; service: 'text' | 'image'; apiKey: KeyChange }) => Promise<Result<string[]>>
   chooseDirectory: () => Promise<Result<string | null>>
+  savePlatformConfig: (config: { platformLinks: PlatformLink[]; platformPrompts: PlatformPrompts; titlePrompts: PlatformPrompts }) => Promise<Result<AppSettings>>
+  openPlatform: (name: string) => Promise<Result<void>>
 }
