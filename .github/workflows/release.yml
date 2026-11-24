@@ -2,6 +2,10 @@ name: Build and release
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to release (for example v0.0.4)
+        type: string
   push:
     tags:
       - 'v*'
@@ -9,8 +13,62 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      commit: ${{ steps.source.outputs.commit }}
+    steps:
+      - name: Resolve release tag
+        id: version
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Use an existing version tag (vMAJOR.MINOR.PATCH)." >&2
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ steps.version.outputs.tag }}
+          persist-credentials: false
+      - name: Record tagged commit
+        id: source
+        run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Prepare draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [[ "$TAG" != "v$VERSION" ]]; then
+            echo "Version tag must match the package version." >&2
+            exit 1
+          fi
+          if IS_DRAFT=$(gh release view "$TAG" --json isDraft --jq .isDraft); then
+            if [[ "$IS_DRAFT" != true ]]; then
+              echo "$TAG is already published." >&2
+              exit 1
+            fi
+          else
+            gh release create "$TAG" --draft --title "灵稿 AI $TAG" --generate-notes --verify-tag
+          fi
+
   build:
+    name: Build ${{ matrix.artifact }}
+    needs: prepare
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -27,18 +85,13 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-      - name: Check version tag
-        shell: bash
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          if [[ "$GITHUB_REF_NAME" != "v$VERSION" || ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Version tag must match the package version (vMAJOR.MINOR.PATCH)." >&2
-            exit 1
-          fi
       - run: npm ci
       - run: npm test
       - run: npm run build
@@ -46,34 +99,43 @@ jobs:
         run: npx --yes electron-builder@26.0.12 ${{ matrix.target }} --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact }}
-          path: |
-            dist/*.exe
-            dist/*.dmg
-            dist/*.zip
-          if-no-files-found: error
-          retention-days: 7
+      - name: Upload installers to draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          test "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = true
+          shopt -s nullglob
+          assets=(dist/*.exe dist/*.dmg dist/*.zip)
+          if (( ${#assets[@]} == 0 )); then
+            echo "No installers were produced." >&2
+            exit 1
+          fi
+          gh release upload "$TAG" "${assets[@]}" --clobber
 
   release:
-    needs: build
+    needs: [prepare, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: release-assets
-          merge-multiple: true
       - name: Publish release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          COMMIT: ${{ needs.prepare.outputs.commit }}
         run: |
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" release-assets/*
-          else
-            gh release create "$GITHUB_REF_NAME" release-assets/* --title "灵稿 AI $GITHUB_REF_NAME" --generate-notes --verify-tag
-          fi
+          VERSION=${TAG#v}
+          test "$(gh api "repos/$GH_REPO/commits/$TAG" --jq .sha)" = "$COMMIT"
+          ASSETS=$(gh release view "$TAG" --json assets --jq '.assets[] | select(.state == "uploaded" and .size > 0) | .name')
+          for installer in mac-arm64.dmg mac-arm64.zip mac-x64.dmg mac-x64.zip win-x64.exe; do
+            if ! grep -Fxq "linggao-ai-$VERSION-$installer" <<< "$ASSETS"; then
+              echo "Missing installer: $installer" >&2
+              exit 1
+            fi
+          done
+          gh release edit "$TAG" --draft=false --verify-tag
