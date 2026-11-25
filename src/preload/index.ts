@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('settingsApi', settings)
 
 const drafts: DraftsApi = {
   list: () => ipcRenderer.invoke('drafts:list'),
+  activity: () => ipcRenderer.invoke('drafts:activity'),
   read: (id, platform) => ipcRenderer.invoke('drafts:read', id, platform),
   readTitle: (id, platform) => ipcRenderer.invoke('drafts:read-title', id, platform),
   saveTitle: (id, platform, title, expected) => ipcRenderer.invoke('drafts:save-title', id, platform, title, expected),
@@ -94,6 +95,8 @@ const workspace: WorkspaceApi = {
   switchWorkspace: (directory) => ipcRenderer.invoke('workspace:switch', directory),
   read: () => ipcRenderer.invoke('workspace:read'),
   change: (change) => ipcRenderer.invoke('workspace:change', change),
+  previewDeleteNodes: (nodes) => ipcRenderer.invoke('workspace:preview-delete-nodes', nodes),
+  deleteNodes: (plan) => ipcRenderer.invoke('workspace:delete-nodes', plan),
   deleteArticle: (id) => ipcRenderer.invoke('workspace:delete-article', id),
   open: () => ipcRenderer.invoke('workspace:open'),
   create: (name) => ipcRenderer.invoke('workspace:create', name),

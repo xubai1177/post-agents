@@ -1,18 +1,20 @@
-import { app, BrowserWindow, ipcMain, net, shell } from 'electron'
-import { NsisUpdater } from 'electron-updater'
+import { app, autoUpdater, BrowserWindow, ipcMain, net, shell } from 'electron'
+import { MacUpdater, NsisUpdater } from 'electron-updater'
 import type { UpdateState } from '../../../shared/updates'
 import { fetchLatestRelease, updateOrigin } from './release-source'
 import { respond } from '../../ipc/security'
 
-const updater = process.platform === 'win32' && app.isPackaged ? new NsisUpdater() : null
+const updater = !app.isPackaged ? null : process.platform === 'win32' ? new NsisUpdater() : process.platform === 'darwin' ? new MacUpdater() : null
 if (updater) {
   updater.autoDownload = false
   updater.autoInstallOnAppQuit = false
   updater.allowPrerelease = false
   updater.allowDowngrade = false
   updater.disableDifferentialDownload = true
-  updater.disableWebInstaller = true
-  updater.on('error', () => {})
+  if (updater instanceof NsisUpdater) updater.disableWebInstaller = true
+  updater.on('error', error => {
+    if (state.status === 'installing') change({ status: 'error', errorStage: 'download', error: error.message.includes('read-only') ? '安装位置不可写，请将应用移到可写目录后重试。' : '更新校验失败，请重试。' })
+  })
 }
 let state: UpdateState = {
   currentVersion: app.getVersion(),
@@ -29,13 +31,15 @@ function newer(version: string, current: string): boolean {
   return (left[0] - right[0] || left[1] - right[1] || left[2] - right[2]) > 0
 }
 async function check(): Promise<UpdateState> {
-  if (['checking', 'downloading', 'downloaded'].includes(state.status)) return state
+  if (['checking', 'downloading', 'downloaded', 'installing'].includes(state.status)) return state
   if (!app.isPackaged || state.platform === 'unsupported') return change({ status: 'error', error: '当前运行环境无法检查更新。', errorStage: 'check' })
-  change({ status: 'checking', error: undefined })
+  change({ status: 'checking', error: undefined, errorStage: undefined })
   try {
     const { version, notes } = await fetchLatestRelease((url, options) => net.fetch(url, options))
     if (!newer(version, state.currentVersion)) return change({ status: 'current', version: undefined, notes: undefined })
-    return change({ status: 'available', version, notes })
+    const available = change({ status: 'available', version, notes })
+    if (updater) void download()
+    return available
   } catch (error) {
     return change({ status: 'error', errorStage: 'check', error: error instanceof Error && (error.message.startsWith('无法读取') || error.message.startsWith('更新信息')) ? error.message : '检查更新失败，请检查网络后重试。' })
   }
@@ -43,12 +47,13 @@ async function check(): Promise<UpdateState> {
 async function download(): Promise<void> {
   if (!updater || !state.version || !(state.status === 'available' || (state.status === 'error' && state.errorStage === 'download'))) throw new Error('无法下载更新。')
   const version = state.version
-  change({ status: 'downloading', progress: 0, error: undefined })
+  change({ status: 'downloading', progress: 0, error: undefined, errorStage: undefined })
   try {
     updater.setFeedURL({ provider: 'generic', url: `${updateOrigin}/versions/v${version}/` })
     const result = await updater.checkForUpdates()
     const info = result?.updateInfo
-    if (!result?.isUpdateAvailable || info?.version !== version || info.files.length !== 1 || info.files[0].url !== `linggao-ai-${version}-win-x64.exe`) throw new Error('更新文件与版本不匹配。')
+    const expected = process.platform === 'darwin' ? [`linggao-ai-${version}-mac-arm64.zip`, `linggao-ai-${version}-mac-x64.zip`] : [`linggao-ai-${version}-win-x64.exe`]
+    if (!result?.isUpdateAvailable || info?.version !== version || info.files.length !== expected.length || !expected.every(name => info.files.some(file => file.url === name))) throw new Error('更新文件与版本不匹配。')
     await updater.downloadUpdate()
     change({ status: 'downloaded', progress: 100 })
   } catch {
@@ -62,7 +67,14 @@ export function registerUpdates(): void {
   ipcMain.handle('updates:download', event => respond(event, async () => { void download() }))
   ipcMain.handle('updates:install', event => respond(event, async () => {
     if (!updater || state.status !== 'downloaded') throw new Error('更新尚未下载。')
-    updater.quitAndInstall()
+    if (process.platform !== 'darwin') { updater.quitAndInstall(); return }
+    change({ status: 'installing', error: undefined, errorStage: undefined })
+    const cleanup = () => { autoUpdater.removeListener('update-downloaded', ready); autoUpdater.removeListener('error', failed) }
+    const ready = () => { cleanup(); autoUpdater.quitAndInstall() }
+    const failed = () => cleanup()
+    autoUpdater.once('update-downloaded', ready)
+    autoUpdater.once('error', failed)
+    try { autoUpdater.checkForUpdates() } catch (error) { cleanup(); change({ status: 'error', errorStage: 'download', error: '更新校验失败，请重试。' }); throw error }
   }))
   ipcMain.handle('updates:open-release', event => respond(event, async () => {
     if (state.platform !== 'mac' || !state.version || !/^\d+\.\d+\.\d+$/.test(state.version)) throw new Error('版本信息无效。')

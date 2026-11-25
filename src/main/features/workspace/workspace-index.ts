@@ -3,7 +3,7 @@ import { lstat, mkdtemp, readFile, rename, rm, rmdir, writeFile } from 'node:fs/
 import { join } from 'node:path'
 import { isImageStyle } from '../../../shared/image-styles'
 import type { ImageStyle } from '../../../shared/image-styles'
-import { isWorkspaceNodeId, workspaceChildren, type DeleteArticleResult, type WorkspaceChange, type WorkspaceFolder, type WorkspaceIndex, type WorkspaceNodeId } from '../../../shared/workspace'
+import { isWorkspaceNodeId, workspaceChildren, type DeleteArticleResult, type DeleteNodesPlan, type DeleteNodesResult, type WorkspaceChange, type WorkspaceFolder, type WorkspaceIndex, type WorkspaceNodeId } from '../../../shared/workspace'
 import { listDrafts, safeTitle } from '../drafts/draft-store'
 
 const fileName = '.post-agents-workspace.json'
@@ -54,7 +54,14 @@ function validate(value: unknown): WorkspaceIndex {
     if (!Array.isArray(input.order) || !input.order.every(isWorkspaceNodeId)) return invalid()
     order = [...new Set(input.order)]
   }
-  return { version: 1, folders, assignments, titles, imageStyles, ...(order && { order }) }
+  const folderId = (v: unknown) => typeof v === 'string' && /^[a-zA-Z0-9-]{1,80}$/.test(v) ? v : undefined
+  const defaultFolderId = folderId(input.defaultFolderId), generationFolderId = folderId(input.generationFolderId)
+  const topicFolders: Record<string, string> = Object.create(null) as Record<string, string>
+  if (input.topicFolders !== undefined) {
+    if (!input.topicFolders || typeof input.topicFolders !== 'object' || Array.isArray(input.topicFolders)) return invalid()
+    for (const [key, value] of Object.entries(input.topicFolders)) { if (!folderId(key) || !folderId(value)) return invalid(); topicFolders[key] = value as string }
+  }
+  return { version: 1, folders, assignments, titles, imageStyles, ...(order && { order }), ...(defaultFolderId && { defaultFolderId }), ...(generationFolderId && { generationFolderId }), ...(Object.keys(topicFolders).length && { topicFolders }) }
 }
 export async function readWorkspaceIndex(root: string): Promise<WorkspaceIndex> {
   if (!root) throw new Error('请先在设置中选择草稿目录。')
@@ -66,6 +73,18 @@ export async function readWorkspaceIndex(root: string): Promise<WorkspaceIndex> 
 export function changeWorkspaceIndex(root: string, change: WorkspaceChange): Promise<WorkspaceIndex> {
   const pending = queue.then(() => changeExclusive(root, change)); queue = pending.catch(() => undefined); return pending
 }
+export function ensureWorkspaceIndex(root: string): Promise<WorkspaceIndex> {
+  const pending = queue.then(async () => {
+    const index = await readWorkspaceIndex(root), before = JSON.stringify(index)
+    let folder = index.folders.find(item => item.id === index.defaultFolderId && item.parentId === null && item.name === '未分类') ?? index.folders.find(item => item.parentId === null && item.name === '未分类')
+    if (!folder) { folder = { id: randomUUID(), name: '未分类', parentId: null }; index.folders.unshift(folder) }
+    index.defaultFolderId = folder.id
+    if (!index.folders.some(item => item.id === index.generationFolderId)) index.generationFolderId = folder.id
+    for (const draft of await listDrafts(root)) if (!index.assignments[draft.id]) index.assignments[draft.id] = folder.id
+    if (JSON.stringify(index) !== before) await writeWorkspaceIndex(root, index)
+    return index
+  }); queue = pending.catch(() => undefined); return pending
+}
 function removeFromOrder(index: WorkspaceIndex, removed: ReadonlySet<WorkspaceNodeId>): void {
   if (index.order) index.order = index.order.filter(id => !removed.has(id))
 }
@@ -74,7 +93,17 @@ async function changeExclusive(root: string, change: WorkspaceChange): Promise<W
   const getFolder = (id: string) => { const folder = index.folders.find((item) => item.id === id); if (!folder) throw new Error('目录不存在。'); return folder }
   const name = (value: string) => { const trimmed = value.trim(); if (!trimmed || trimmed.length > 100 || /[\x00-\x1f]/.test(trimmed)) throw new Error('目录名称无效。'); return trimmed }
   const unique = (parent: string | null, value: string, except?: string) => { if (index.folders.some((item) => item.parentId === parent && item.name === value && item.id !== except)) throw new Error('同级目录名称已存在。') }
-  if (change.type === 'create') { if (change.parentId !== null) getFolder(change.parentId); const value = name(change.name); unique(change.parentId, value); index.folders.push({ id: randomUUID(), name: value, parentId: change.parentId }) }
+  if (change.type === 'setGenerationFolder') { getFolder(change.id); index.generationFolderId = change.id }
+  else if (change.type === 'ensureTopicFolder') {
+    getFolder(change.parentId)
+    const previous = index.folders.find(folder => folder.id === index.topicFolders?.[change.batchId] && folder.parentId === change.parentId)
+    if (previous) return index
+    const base = change.name.replace(/[\\/:*?"<>|\x00-\x1f]/g, ' ').trim().replace(/\s+/g, ' ').replace(/[. ]+$/g, '').slice(0, 80) || '选题'
+    let candidate = base, n = 2
+    while (index.folders.some(folder => folder.parentId === change.parentId && folder.name === candidate)) candidate = `${base}（${n++}）`
+    const id = randomUUID(); index.folders.push({ id, name: candidate, parentId: change.parentId }); index.topicFolders = { ...index.topicFolders, [change.batchId]: id }
+  }
+  else if (change.type === 'create') { if (change.parentId !== null) getFolder(change.parentId); const value = name(change.name); unique(change.parentId, value); index.folders.push({ id: randomUUID(), name: value, parentId: change.parentId }) }
   else if (change.type === 'rename') { const folder = getFolder(change.id), value = name(change.name); unique(folder.parentId, value, folder.id); folder.name = value }
   else if (change.type === 'delete') {
     getFolder(change.id)
@@ -84,6 +113,7 @@ async function changeExclusive(root: string, change: WorkspaceChange): Promise<W
       count = removed.size
       for (const folder of index.folders) if (folder.parentId && removed.has(folder.parentId)) removed.add(folder.id)
     } while (count !== removed.size)
+    if (Object.keys(index.assignments).some(id => { let parent = index.assignments[id]; const visited = new Set<string>(); while (parent && !visited.has(parent)) { if (removed.has(parent)) return true; visited.add(parent); parent = index.assignments[parent] } return false })) throw new Error('目录包含文章，请使用完整删除操作。')
     index.folders = index.folders.filter(folder => !removed.has(folder.id))
     const detached = new Set([...removed].map<WorkspaceNodeId>(id => `folder:${id}`))
     for (const [id, folder] of Object.entries(index.assignments)) {
@@ -217,6 +247,51 @@ async function deleteArticleExclusive(root: string, id: string, deps: DeleteDepe
   }
   try { await deps.removeTree(staging) } catch { return { index, warning: `文章已从目录移除，但部分本地资源未删除，暂存于 ${staging}，请手动处理。` } }
   return { index }
+}
+
+async function buildDeleteNodesPlan(root: string, nodes: WorkspaceNodeId[]): Promise<DeleteNodesPlan> {
+  const index = await readWorkspaceIndex(root), drafts = await listDrafts(root)
+  const uniqueNodes = [...new Set(nodes)].sort()
+  if (!uniqueNodes.length) throw new Error('请选择要删除的项目。')
+  const folderIds = new Set(uniqueNodes.filter(node => node.startsWith('folder:')).map(node => node.slice(7)))
+  const articleIds = new Set(uniqueNodes.filter(node => node.startsWith('article:')).map(node => node.slice(8)))
+  for (const id of folderIds) if (!index.folders.some(folder => folder.id === id)) throw new Error('文件夹已变化，请重新选择。')
+  for (const id of articleIds) if (!drafts.some(draft => draft.id === id)) throw new Error('文章已变化，请重新选择。')
+  let count: number
+  do { count = folderIds.size; for (const folder of index.folders) if (folder.parentId && folderIds.has(folder.parentId)) folderIds.add(folder.id) } while (count !== folderIds.size)
+  for (const id of new Set([...drafts.map(draft => draft.id), ...Object.keys(index.assignments)])) {
+    let parent = index.assignments[id]
+    const visited = new Set<string>()
+    while (parent && !visited.has(parent)) { if (folderIds.has(parent)) { articleIds.add(id); break }; visited.add(parent); parent = index.assignments[parent] }
+  }
+  return { nodes: uniqueNodes, folderIds: [...folderIds].sort(), articleIds: [...articleIds].sort() }
+}
+export function previewDeleteNodes(root: string, nodes: WorkspaceNodeId[]): Promise<DeleteNodesPlan> {
+  const pending = queue.then(() => buildDeleteNodesPlan(root, nodes)); queue = pending.catch(() => undefined); return pending
+}
+export function deleteWorkspaceNodes(root: string, expected: DeleteNodesPlan, isActive: (id: string) => boolean): Promise<DeleteNodesResult> {
+  const pending = queue.then(async () => {
+    const plan = await buildDeleteNodesPlan(root, expected.nodes)
+    if (JSON.stringify(plan) !== JSON.stringify(expected)) throw new Error('删除范围已变化，请重新确认。')
+    const active = plan.articleIds.filter(isActive)
+    if (active.length) throw new Error(`有 ${active.length} 篇文章正在生成，请完成后重试。`)
+    const deletedArticleIds: string[] = [], deletedFolderIds: string[] = [], errors: string[] = []
+    for (const id of plan.articleIds) {
+      if (isActive(id)) { errors.push(`${id}：文章正在生成，请完成后重试。`); continue }
+      try { const result = await deleteArticleExclusive(root, id, deleteDefaults); deletedArticleIds.push(id); if (result.warning) errors.push(result.warning) }
+      catch (error) { errors.push(`${id}：${error instanceof Error ? error.message : '删除失败'}`) }
+    }
+    let index = await readWorkspaceIndex(root)
+    if (deletedArticleIds.length === plan.articleIds.length) {
+      for (const id of plan.folderIds) {
+        if (!index.folders.some(folder => folder.id === id)) continue
+        const before = new Set(index.folders.map(folder => folder.id))
+        try { index = await changeExclusive(root, { type: 'delete', id }); const remaining = new Set(index.folders.map(folder => folder.id)); for (const oldId of before) if (!remaining.has(oldId)) deletedFolderIds.push(oldId) }
+        catch (error) { errors.push(`文件夹删除失败：${error instanceof Error ? error.message : '请重试'}`) }
+      }
+    } else if (plan.folderIds.length) errors.push('部分文章未删除，相关文件夹已保留。')
+    return { index, deletedArticleIds, deletedFolderIds, errors }
+  }); queue = pending.catch(() => undefined); return pending
 }
 
 export async function assertAvailableArticleTitle(root: string, input: string): Promise<void> {

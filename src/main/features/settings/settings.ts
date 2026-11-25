@@ -1,5 +1,5 @@
 import { rememberWorkspace } from '../../../shared/recent-workspaces'
-import { defaultPlatformLinks, validPlatformLinks, type PlatformLink } from '../../../shared/platform-links'
+import { defaultPlatformLinks, fillDefaultPlatformLinks, validPlatformLinks, type PlatformLink } from '../../../shared/platform-links'
 import { app, safeStorage } from 'electron'
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto'
 import { compactPlatformPrompts, isPlatformPrompts, resolvePlatformPrompts, resolveTitlePrompts, type PlatformPrompts } from '../../../shared/platform-prompts'
 import { defaultAccentColor, defaultPanelOpacity, isAppearanceMode, isPanelOpacity, type AppearanceMode, type AppSettings, type LegacySettings, type SettingsUpdate } from '../../../shared/settings'
 
-interface StoredSettings { recentWorkspaces?: string[]; appearance?: AppearanceMode; accentColor?: string; panelOpacity?: number; version: 1; apiUrl: string; model: string; draftsDirectory: string; encryptedApiKey: string | null; disableDefaultApiKey?: boolean; imageService?: 'shared' | 'custom'; imageApiUrl?: string; imageModel?: string; encryptedImageApiKey?: string | null; platformPrompts?: PlatformPrompts; titlePrompts?: PlatformPrompts; platformLinks?: PlatformLink[] }
+interface StoredSettings { platformLinkDefaultsApplied?: boolean; recentWorkspaces?: string[]; appearance?: AppearanceMode; accentColor?: string; panelOpacity?: number; version: 1; apiUrl: string; model: string; draftsDirectory: string; encryptedApiKey: string | null; disableDefaultApiKey?: boolean; imageService?: 'shared' | 'custom'; imageApiUrl?: string; imageModel?: string; encryptedImageApiKey?: string | null; platformPrompts?: PlatformPrompts; titlePrompts?: PlatformPrompts; platformLinks?: PlatformLink[] }
 const empty: StoredSettings = { version: 1, apiUrl: '', model: '', draftsDirectory: '', encryptedApiKey: null }
 const selections = new Map<number, string>()
 let queue: Promise<unknown> = Promise.resolve()
@@ -72,6 +72,9 @@ export function loadSettings(legacy: unknown): Promise<AppSettings> {
     let current = await readSettings()
     if (!current && validModel(legacy) && (legacy.apiUrl || legacy.model)) {
       current = { ...empty, apiUrl: legacy.apiUrl, model: legacy.model }
+    }
+    if (current && !current.platformLinkDefaultsApplied) {
+      current = { ...current, platformLinks: fillDefaultPlatformLinks(current.platformLinks ?? defaultPlatformLinks()), platformLinkDefaultsApplied: true }
       await writeSettings(current)
     }
     return publicSettings(current ?? empty)
@@ -112,7 +115,7 @@ export function saveSettings(senderId: number, update: unknown): Promise<AppSett
       if (!safeStorage.isEncryptionAvailable() || (process.platform === 'linux' && ['basic_text', 'unknown'].includes(safeStorage.getSelectedStorageBackend()))) throw new Error('此设备的安全存储不可用，无法保存 API 密钥。')
       encryptedImageApiKey = safeStorage.encryptString(data.imageApiKey.value).toString('base64')
     }
-    const next: StoredSettings = { version: 1, recentWorkspaces: rememberWorkspace(existing.recentWorkspaces ?? [], data.draftsDirectory), appearance: data.appearance ?? existing.appearance, accentColor: data.accentColor ?? existing.accentColor, panelOpacity: data.panelOpacity ?? existing.panelOpacity, apiUrl: data.apiUrl, model: data.model, draftsDirectory: data.draftsDirectory, encryptedApiKey, disableDefaultApiKey, imageService: data.imageService, imageApiUrl: data.imageApiUrl, imageModel: data.imageModel, encryptedImageApiKey, platformPrompts: data.platformPrompts === undefined ? existing.platformPrompts : compactPlatformPrompts(data.platformPrompts), titlePrompts: data.titlePrompts === undefined ? existing.titlePrompts : data.titlePrompts, platformLinks: data.platformLinks ?? existing.platformLinks }
+    const next: StoredSettings = { platformLinkDefaultsApplied: true, version: 1, recentWorkspaces: rememberWorkspace(existing.recentWorkspaces ?? [], data.draftsDirectory), appearance: data.appearance ?? existing.appearance, accentColor: data.accentColor ?? existing.accentColor, panelOpacity: data.panelOpacity ?? existing.panelOpacity, apiUrl: data.apiUrl, model: data.model, draftsDirectory: data.draftsDirectory, encryptedApiKey, disableDefaultApiKey, imageService: data.imageService, imageApiUrl: data.imageApiUrl, imageModel: data.imageModel, encryptedImageApiKey, platformPrompts: data.platformPrompts === undefined ? existing.platformPrompts : compactPlatformPrompts(data.platformPrompts), titlePrompts: data.titlePrompts === undefined ? existing.titlePrompts : data.titlePrompts, platformLinks: data.platformLinks ?? existing.platformLinks }
     await writeSettings(next)
     selections.delete(senderId)
     return publicSettings(next)
@@ -125,7 +128,7 @@ export function savePlatformConfig(input: unknown): Promise<AppSettings> {
     const data = input as Record<string, unknown>
     if (!validPlatformLinks(data.platformLinks) || !isPlatformPrompts(data.platformPrompts) || !isPlatformPrompts(data.titlePrompts)) throw new Error('invalid platform configuration')
     const existing = await readSettings() ?? { ...empty }
-    const next = { ...existing, platformLinks: data.platformLinks, platformPrompts: compactPlatformPrompts(data.platformPrompts), titlePrompts: data.titlePrompts }
+    const next = { ...existing, platformLinkDefaultsApplied: true, platformLinks: data.platformLinks, platformPrompts: compactPlatformPrompts(data.platformPrompts), titlePrompts: data.titlePrompts }
     await writeSettings(next)
     return publicSettings(next)
   })
@@ -156,7 +159,7 @@ export function restoreWorkspaceSettings(directory: string, backup: import('../w
     if ((backup.titlePrompts !== undefined && !isPlatformPrompts(backup.titlePrompts)) || (backup.platformPrompts !== undefined && !isPlatformPrompts(backup.platformPrompts)) || !validModel(backup) || !validModel({ apiUrl: backup.imageApiUrl, model: backup.imageModel }) || !validString(backup.apiKey, 8192) || !validString(backup.imageApiKey, 8192) || !['shared', 'custom'].includes(backup.imageService)) throw new Error('备份设置无效。')
     if (backup.credentialsIncluded !== false && (backup.apiKey || backup.imageApiKey) && (!safeStorage.isEncryptionAvailable() || (process.platform === 'linux' && ['basic_text', 'unknown'].includes(safeStorage.getSelectedStorageBackend())))) throw new Error('此设备的安全存储不可用，无法恢复 API 密钥。')
     const current = await readSettings() ?? { ...empty }
-    const data: StoredSettings = { version: 1, recentWorkspaces: rememberWorkspace(rememberWorkspace(current.recentWorkspaces ?? [], current.draftsDirectory), directory), appearance: current.appearance, accentColor: current.accentColor, panelOpacity: current.panelOpacity, draftsDirectory: directory, apiUrl: backup.apiUrl, model: backup.model, encryptedApiKey: backup.credentialsIncluded === false ? current.encryptedApiKey : backup.apiKey ? safeStorage.encryptString(backup.apiKey).toString('base64') : null, disableDefaultApiKey: backup.credentialsIncluded === false ? current.disableDefaultApiKey : !backup.apiKey, imageService: backup.imageService, imageApiUrl: backup.imageApiUrl, imageModel: backup.imageModel, encryptedImageApiKey: backup.credentialsIncluded === false ? current.encryptedImageApiKey : backup.imageApiKey ? safeStorage.encryptString(backup.imageApiKey).toString('base64') : null, platformPrompts: backup.platformPrompts, titlePrompts: backup.titlePrompts, platformLinks: current.platformLinks }
+    const data: StoredSettings = { platformLinkDefaultsApplied: current.platformLinkDefaultsApplied, version: 1, recentWorkspaces: rememberWorkspace(rememberWorkspace(current.recentWorkspaces ?? [], current.draftsDirectory), directory), appearance: current.appearance, accentColor: current.accentColor, panelOpacity: current.panelOpacity, draftsDirectory: directory, apiUrl: backup.apiUrl, model: backup.model, encryptedApiKey: backup.credentialsIncluded === false ? current.encryptedApiKey : backup.apiKey ? safeStorage.encryptString(backup.apiKey).toString('base64') : null, disableDefaultApiKey: backup.credentialsIncluded === false ? current.disableDefaultApiKey : !backup.apiKey, imageService: backup.imageService, imageApiUrl: backup.imageApiUrl, imageModel: backup.imageModel, encryptedImageApiKey: backup.credentialsIncluded === false ? current.encryptedImageApiKey : backup.imageApiKey ? safeStorage.encryptString(backup.imageApiKey).toString('base64') : null, platformPrompts: backup.platformPrompts, titlePrompts: backup.titlePrompts, platformLinks: current.platformLinks }
     await writeSettings(data); return publicSettings(data)
   })
 }

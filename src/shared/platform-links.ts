@@ -1,9 +1,22 @@
-import { platforms } from './drafts'
+import { platforms, type Platform } from './drafts'
 
 export interface PlatformLink { name: string; url: string; enabled?: boolean }
 
+const defaultUrls: Record<Platform, string> = {
+  小红书: 'https://creator.xiaohongshu.com/',
+   公众号: 'https://mp.weixin.qq.com/',
+  抖音图文: 'https://creator.douyin.com/'
+}
+
 export function defaultPlatformLinks(): PlatformLink[] {
-  return platforms.map(name => ({ name, url: '' }))
+  return platforms.map(name => ({ name, url: defaultUrls[name] }))
+}
+
+export function fillDefaultPlatformLinks(links: PlatformLink[]): PlatformLink[] {
+  return links.map(link => {
+    const builtin = platforms.find(name => name === link.name)
+    return { ...link, url: link.url || (builtin ? defaultUrls[builtin] : '') }
+  })
 }
 
 export function validPlatformUrl(value: string): boolean {

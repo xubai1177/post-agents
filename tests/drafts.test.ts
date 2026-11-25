@@ -299,7 +299,24 @@ test('选题搜索失败可选择跳过并生成，空结果不视为成功', as
   await assert.rejects(generateTopics(request, true, 'r2', () => {}, { ...deps, call: async () => '[]' }))
 })
 
-test('工作空间目录支持嵌套、分类和删除后保留草稿', () => withRoot(async (root) => {
+test('工作区迁移未分类文章并保存默认目录与选题批次文件夹', () => withRoot(async root => {
+  const { ensureWorkspaceIndex, changeWorkspaceIndex, readWorkspaceIndex } = await import('../src/main/features/workspace/workspace-index')
+  const article = await createTopic(root, '原有文章'); await createPlatform(root, article, '小红书', '正文')
+  let index = await ensureWorkspaceIndex(root)
+  const fallback = index.defaultFolderId!
+  assert.equal(index.assignments[article], fallback); assert.equal(index.generationFolderId, fallback)
+  index = await changeWorkspaceIndex(root, { type: 'create', name: '选题集', parentId: fallback })
+  index = await changeWorkspaceIndex(root, { type: 'setGenerationFolder', id: fallback })
+  index = await changeWorkspaceIndex(root, { type: 'ensureTopicFolder', batchId: 'batch-1', parentId: fallback, name: '选题集' })
+  const folder = index.topicFolders?.['batch-1']; assert.ok(folder)
+  assert.equal(index.folders.find(f => f.id === folder)?.name, '选题集（2）')
+  const again = await changeWorkspaceIndex(root, { type: 'ensureTopicFolder', batchId: 'batch-1', parentId: fallback, name: '选题集' })
+  assert.equal(again.topicFolders?.['batch-1'], folder)
+  assert.equal((await readWorkspaceIndex(root)).generationFolderId, fallback)
+  assert.equal((await readDraft(root, article, '小红书')).content, '正文')
+}))
+
+test('包含文章的目录不能通过旧操作删除', () => withRoot(async (root) => {
   const { changeWorkspaceIndex, readWorkspaceIndex } = await import('../src/main/features/workspace/workspace-index')
   const id = await createTopic(root, '分类草稿')
   await createPlatform(root, id, '小红书', '正文')
@@ -310,11 +327,45 @@ test('工作空间目录支持嵌套、分类和删除后保留草稿', () => wi
   await changeWorkspaceIndex(root, { type: 'moveDraft', draftId: id, folderId: child })
   await assert.rejects(changeWorkspaceIndex(root, { type: 'create', name: '文章', parentId: null }), /同级/)
   await changeWorkspaceIndex(root, { type: 'rename', id: child, name: '新名称' })
-  index = await changeWorkspaceIndex(root, { type: 'delete', id: parent })
-  assert.deepEqual(index.folders, [])
-  assert.equal(index.assignments[id], undefined)
+  await assert.rejects(changeWorkspaceIndex(root, { type: 'delete', id: parent }), /包含文章/)
   assert.equal((await readDraft(root, id, '小红书')).content, '正文')
-  assert.deepEqual((await readWorkspaceIndex(root)).folders, [])
+  assert.equal((await readWorkspaceIndex(root)).assignments[id], child)
+}))
+
+test('批量永久删除计算所有后代、去重，并拒绝过期范围和生成中文章', () => withRoot(async root => {
+  const { changeWorkspaceIndex, readWorkspaceIndex, previewDeleteNodes, deleteWorkspaceNodes } = await import('../src/main/features/workspace/workspace-index')
+  const first = await createTopic(root, '目录文章一'), second = await createTopic(root, '目录文章二')
+  await createPlatform(root, first, '小红书', '正文一'); await createPlatform(root, second, '公众号', '正文二')
+  let index = await changeWorkspaceIndex(root, { type: 'create', name: '父目录', parentId: null })
+  const parent = index.folders[0].id
+  index = await changeWorkspaceIndex(root, { type: 'create', name: '子目录', parentId: parent })
+  const child = index.folders[1].id
+  await changeWorkspaceIndex(root, { type: 'moveDraft', draftId: first, folderId: parent })
+  const oldPlan = await previewDeleteNodes(root, [`folder:${parent}`, `folder:${child}`, `article:${first}`])
+  await changeWorkspaceIndex(root, { type: 'moveDraft', draftId: second, folderId: child })
+  await assert.rejects(deleteWorkspaceNodes(root, oldPlan, () => false), /范围已变化/)
+  const plan = await previewDeleteNodes(root, [`folder:${parent}`, `folder:${child}`, `article:${first}`])
+  assert.equal(plan.folderIds.length, 2); assert.deepEqual(new Set(plan.articleIds), new Set([first, second]))
+  await assert.rejects(deleteWorkspaceNodes(root, plan, id => id === second), /正在生成/)
+  assert.equal((await readDraft(root, first, '小红书')).content, '正文一')
+  const result = await deleteWorkspaceNodes(root, plan, () => false)
+  assert.equal(result.errors.length, 0); assert.equal(result.deletedFolderIds.length, 2)
+  assert.deepEqual(new Set(result.deletedArticleIds), new Set([first, second]))
+  assert.equal((await listDrafts(root)).length, 0); assert.deepEqual((await readWorkspaceIndex(root)).folders, [])
+}))
+
+test('批量删除期间文章开始生成时保留失败项和文件夹', () => withRoot(async root => {
+  const { changeWorkspaceIndex, previewDeleteNodes, deleteWorkspaceNodes } = await import('../src/main/features/workspace/workspace-index')
+  const first = await createTopic(root, '先删除'), second = await createTopic(root, '保留文章')
+  await createPlatform(root, first, '小红书', '正文'); await createPlatform(root, second, '小红书', '正文')
+  const index = await changeWorkspaceIndex(root, { type: 'create', name: '文件夹', parentId: null }), folder = index.folders[0].id
+  await changeWorkspaceIndex(root, { type: 'moveDraft', draftId: first, folderId: folder }); await changeWorkspaceIndex(root, { type: 'moveDraft', draftId: second, folderId: folder })
+  const plan = await previewDeleteNodes(root, [`folder:${folder}`]); let checks = 0
+  const result = await deleteWorkspaceNodes(root, plan, id => { checks++; return checks > plan.articleIds.length && id === second })
+  assert.deepEqual(result.deletedArticleIds, [first]); assert.equal(result.deletedFolderIds.length, 0)
+  assert.ok(result.errors.some(error => error.includes('相关文件夹已保留')))
+  assert.equal((await readDraft(root, second, '小红书')).content, '正文')
+  assert.ok(result.index.folders.some(item => item.id === folder))
 }))
 
 test('批量移动保持文件夹层级并拒绝循环和同名冲突', () => withRoot(async root => {
@@ -581,12 +632,48 @@ test('生成通知区分部分成功，并且没有结果时不提示成功', as
   assert.match(generationNoticeText({ kind: 'optimization' })!.body, /确认后再应用/)
 })
 
+test('看板统计按任务去重并按选题记录日期和平台归类', async () => {
+  const { platformCounts, recentTopicDays, taskCounts } = await import('../src/renderer/src/features/dashboard-data')
+  const drafts = [{ id: 'a', title: '文章', platforms: ['小红书' as const, '公众号' as const] }]
+  assert.deepEqual(platformCounts(drafts).map(item => item.count), [1, 1, 0])
+  const request = { direction: '主题', audience: '', platforms: ['小红书' as const] }
+  const batch = { request, candidates: [], sources: [], skipped: false }
+  const date = new Date(2026, 10, 25, 12)
+  const topics: import('../src/shared/topics').TopicWorkspace = { version: 1, batches: [{ id: 'b1', createdAt: new Date(2026, 10, 25, 10).toISOString(), batch }, { id: 'b2', createdAt: new Date(2026, 10, 18, 10).toISOString(), batch }], tasks: [{ id: 't1', batchId: 'b1', index: 0, title: '文章', status: 'running', draftId: 'a' }, { id: 't2', batchId: 'b1', index: 1, title: '失败', status: 'failed' }] }
+  const run = { id: 'a', request: { title: '文章', audience: '', platforms: ['小红书' as const], research: 'online' as const }, versions: {}, status: 'running' as const, imageStyle: 'flat' as const, generateImages: false }
+  assert.deepEqual(taskCounts([run], topics, [{ id: 'a', platform: '公众号', status: 'done' }]), { active: 1, attention: 1, done: 1 })
+  const days = recentTopicDays(topics, date); assert.equal(days.length, 7); assert.equal(days[6].count, 1); assert.equal(days.reduce((sum, day) => sum + day.count, 0), 1)
+})
+
+test('最近修改时间取各平台正文文件的最新时间', () => withRoot(async root => {
+  const { listDraftActivity } = await import('../src/main/features/drafts/draft-store')
+  const { utimes } = await import('node:fs/promises')
+  const first = await createTopic(root, '第一篇'), second = await createTopic(root, '第二篇')
+  await createPlatform(root, first, '小红书', '正文'); await createPlatform(root, first, '公众号', '正文'); await createPlatform(root, second, '小红书', '正文')
+  const older = new Date('2025-01-01T01:00:00Z'), newer = new Date('2025-01-03T01:00:00Z'), middle = new Date('2025-01-02T01:00:00Z')
+  await utimes(join(root, first, '小红书', '发布文案.md'), older, older); await utimes(join(root, first, '公众号', '发布文案.md'), newer, newer); await utimes(join(root, second, '小红书', '发布文案.md'), middle, middle)
+  const activity = await listDraftActivity(root)
+  assert.deepEqual(activity.map(item => item.id), [first, second]); assert.equal(activity[0].updatedAt, newer.toISOString())
+}))
+
+test('启动首页显示工作区与真实文章，空工作区提供打开入口', async () => {
+  const { createElement } = await import('react')
+  const { renderToStaticMarkup } = await import('react-dom/server')
+  const { WorkspaceHome } = await import('../src/renderer/src/features/WorkspaceHome')
+  const props = { workspace: '我的工作区', drafts: [{ id: 'a', title: '文章原名', platforms: ['小红书' as const] }], titles: { a: '文章新标题' }, loading: false, busy: false, onCreate: () => {}, onTopics: () => {}, onOpen: () => {}, onOpenWorkspace: () => {} }
+  const populated = renderToStaticMarkup(createElement(WorkspaceHome, props))
+  assert.match(populated, /我的工作区/); assert.match(populated, /文章总数/); assert.match(populated, /平台分布/); assert.match(populated, /小红书/)
+  assert.match(populated, /新建文章/); assert.match(populated, /生成选题/)
+  const empty = renderToStaticMarkup(createElement(WorkspaceHome, { ...props, workspace: '', drafts: [], titles: {} }))
+  assert.match(empty, /打开工作区/); assert.doesNotMatch(empty, /文章新标题/)
+})
+
 test('新建文章默认不生成配图，勾选后显示四种风格预览', async () => {
   const { createElement } = await import('react')
   const { renderToStaticMarkup } = await import('react-dom/server')
   const { Create } = await import('../src/renderer/src/features/Create')
   const base = { title: '', angle: '', audience: '', platforms: ['小红书' as const], imageStyle: 'flat' as const, generateImages: false }
-  const props = { availablePlatforms: ['小红书' as const], onChange: () => {}, onBack: () => {}, onCreate: async () => null, busy: false, researchFailed: false, progress: null, imageProgress: '' }
+  const props = { folderIndex: { version: 1 as const, folders: [{ id: 'folder', name: '未分类', parentId: null }], assignments: {}, titles: {}, imageStyles: {} }, folderId: 'folder', onFolderChange: () => {}, onIndexChange: () => {}, availablePlatforms: ['小红书' as const], onChange: () => {}, onBack: () => {}, onCreate: async () => null, busy: false, researchFailed: false, progress: null, imageProgress: '' }
   const initial = renderToStaticMarkup(createElement(Create, { ...props, form: base }))
   assert.match(initial, /type="checkbox"/); assert.doesNotMatch(initial, /class="image-style-card"/); assert.match(initial, /小红书/); assert.doesNotMatch(initial, /公众号/)
   const selected = renderToStaticMarkup(createElement(Create, { ...props, form: { ...base, generateImages: true } }))
@@ -1166,17 +1253,31 @@ test('批量文章交给后台队列并根据文章任务展示最新状态', as
   const request = { direction: '选题', audience: '读者', platforms: ['小红书' as const] }
   let data: import('../src/shared/topics').TopicWorkspace = { version: 1, batches: [{ id: 'batch', createdAt: '2026-01-01', batch: { request, candidates: [{ title: '主题一', angle: '角度', reason: '', platforms: [], sourceIndexes: [], pending: [] }, { title: '主题二', angle: '', reason: '', platforms: [], sourceIndexes: [], pending: [] }], sources: [], skipped: false } }], tasks: [] }
   const started: import('../src/shared/drafts').StartArticleRequest[] = []
-  await startBatchArticles('root', { batchId: 'batch', indexes: [0, 1], platforms: ['小红书'], imageStyle: 'flat', generateImages: true }, {
+  await startBatchArticles('root', { batchId: 'batch', indexes: [0, 1], platforms: ['小红书'], imageStyle: 'flat', generateImages: true, folderId: 'parent' }, {
+    ensureFolder: async () => 'group', assignFolder: async () => {},
     update: async (_root, change) => { data = change(data); return data }, assertTitle: async (_root, title) => { if (title === '主题二') throw new Error('已有同名主题，请更换主题名称。') },
     start: async (_root, options) => { started.push(options); return { id: options.request.title, title: options.request.title, platforms: options.request.platforms } }
   })
-  assert.equal(started.length, 1); assert.equal(started[0].request.angle, '角度'); assert.equal(started[0].generateImages, true)
+  assert.equal(started.length, 1); assert.equal(started[0].request.angle, '角度'); assert.equal(started[0].generateImages, true); assert.equal(started[0].folderId, 'group')
   assert.equal(data.tasks[0].draftId, '主题一'); assert.equal(data.tasks[1].status, 'failed')
   const run = { id: '主题一', request: started[0].request, versions: {}, status: 'running' as const, phase: 'images' as const, imageProgress: '正在生成第 2 张', imageStyle: 'flat' as const, generateImages: true }
   assert.equal(taskWithArticleRun(data.tasks[0], [run]).phase, '正在生成第 2 张')
   assert.equal(taskWithArticleRun(data.tasks[0], [{ ...run, status: 'done' }]).status, 'done')
   assert.equal(taskWithArticleRun(data.tasks[0], [{ ...run, status: 'waiting' }]).waiting, true)
   assert.equal(taskWithArticleRun(data.tasks[0], []).status, 'interrupted')
+})
+
+test('批量文章目录关联失败时保留文章并显示警告', async () => {
+  const { startBatchArticles, taskWithArticleRun } = await import('../src/main/features/topics/batch-articles')
+  const request = { direction: '选题', audience: '', platforms: ['小红书' as const] }
+  let data: import('../src/shared/topics').TopicWorkspace = { version: 1, batches: [{ id: 'batch', createdAt: '2026-01-01', batch: { request, candidates: [{ title: '文章', angle: '', reason: '', platforms: [], sourceIndexes: [], pending: [] }], sources: [], skipped: false } }], tasks: [] }
+  await startBatchArticles('root', { batchId: 'batch', indexes: [0], platforms: ['小红书'], imageStyle: 'flat', generateImages: false, folderId: 'parent' }, {
+    update: async (_root, change) => { data = change(data); return data }, assertTitle: async () => {}, ensureFolder: async () => 'group',
+    start: async () => ({ id: '文章', title: '文章', platforms: ['小红书'] }), assignFolder: async () => { throw new Error('目录不可用') }
+  })
+  assert.equal(data.tasks[0].draftId, '文章'); assert.match(data.tasks[0].message ?? '', /手动移动/)
+  const run = { id: '文章', request: { title: '文章', audience: '', platforms: ['小红书' as const], research: 'online' as const }, versions: {}, status: 'done' as const, imageStyle: 'flat' as const, generateImages: false }
+  assert.match(taskWithArticleRun(data.tasks[0], [run]).message ?? '', /手动移动/)
 })
 
 test('平台链接校验内置平台、自定义名称和安全的网页地址', async () => {
@@ -1190,6 +1291,14 @@ test('平台链接校验内置平台、自定义名称和安全的网页地址',
   assert.equal(validPlatformLinks([...builtins, { name: '知乎', url: 'javascript:alert(1)' }]), false)
   assert.equal(validPlatformLinks([...builtins, { name: '知乎', url: 'https://user:pass@example.com/' }]), false)
   assert.equal(validPlatformLinks(builtins.slice(1)), false)
+})
+
+test('内置平台默认链接补全旧配置并保留用户地址', async () => {
+  const { defaultPlatformLinks, fillDefaultPlatformLinks } = await import('../src/shared/platform-links')
+  const defaults = defaultPlatformLinks()
+  assert.deepEqual(defaults.map(link => link.url), ['https://creator.xiaohongshu.com/', 'https://mp.weixin.qq.com/', 'https://creator.douyin.com/'])
+  const old = [{ name: '小红书', url: '', enabled: false }, { name: '公众号', url: 'https://example.com/' }, { name: '抖音图文', url: '' }, { name: '自定义', url: '' }]
+  assert.deepEqual(fillDefaultPlatformLinks(old), [defaults[0] && { ...defaults[0], enabled: false }, old[1], defaults[2], old[3]])
 })
 
 test('更新检查读取并校验更新服务器的版本信息', async () => {

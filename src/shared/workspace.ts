@@ -4,7 +4,7 @@ import type { AppSettings, Result } from './settings'
 
 export interface WorkspaceFolder { id: string; name: string; parentId: string | null }
 export type WorkspaceNodeId = `folder:${string}` | `article:${string}`
-export interface WorkspaceIndex { version: 1; folders: WorkspaceFolder[]; assignments: Record<string, string>; titles: Record<string, string>; imageStyles: Record<string, ImageStyle>; order?: WorkspaceNodeId[] }
+export interface WorkspaceIndex { version: 1; folders: WorkspaceFolder[]; assignments: Record<string, string>; titles: Record<string, string>; imageStyles: Record<string, ImageStyle>; order?: WorkspaceNodeId[]; defaultFolderId?: string; generationFolderId?: string; topicFolders?: Record<string, string> }
 export type WorkspaceNode =
   | { id: `folder:${string}`; kind: 'folder'; item: WorkspaceFolder }
   | { id: `article:${string}`; kind: 'article'; item: Draft }
@@ -31,6 +31,8 @@ export function workspaceChildren(index: WorkspaceIndex, drafts: Draft[], parent
 }
 
 export type WorkspaceChange =
+  | { type: 'setGenerationFolder'; id: string }
+  | { type: 'ensureTopicFolder'; batchId: string; name: string; parentId: string }
   | { type: 'create'; name: string; parentId: string | null }
   | { type: 'rename'; id: string; name: string }
   | { type: 'delete'; id: string }
@@ -39,6 +41,8 @@ export type WorkspaceChange =
   | { type: 'reorder'; parentId: string | null; node: WorkspaceNodeId; target: WorkspaceNodeId; position: 'before' | 'after' }
   | { type: 'setImageStyle'; draftId: string; style: ImageStyle }
   | { type: 'renameArticle'; draftId: string; title: string; expectedTitle: string }
+export interface DeleteNodesPlan { nodes: WorkspaceNodeId[]; folderIds: string[]; articleIds: string[] }
+export interface DeleteNodesResult { index: WorkspaceIndex; deletedArticleIds: string[]; deletedFolderIds: string[]; errors: string[] }
 export interface DeleteArticleResult { index: WorkspaceIndex; warning?: string }
 export type WorkspaceMenuAction = 'open' | 'create' | 'import' | 'export' | 'settings'
 export interface BackupExportProgress { phase: 'preparing' | 'writing' | 'finishing'; files: number; bytes: number }
@@ -49,6 +53,8 @@ export interface WorkspaceApi {
   switchWorkspace: (directory: string) => Promise<Result<AppSettings>>
   read: () => Promise<Result<WorkspaceIndex & { directory: string }>>
   change: (change: WorkspaceChange) => Promise<Result<WorkspaceIndex>>
+  previewDeleteNodes: (nodes: WorkspaceNodeId[]) => Promise<Result<DeleteNodesPlan>>
+  deleteNodes: (plan: DeleteNodesPlan) => Promise<Result<DeleteNodesResult>>
   deleteArticle: (id: string) => Promise<Result<DeleteArticleResult>>
   open: () => Promise<Result<AppSettings | null>>
   create: (name: string) => Promise<Result<AppSettings | null>>

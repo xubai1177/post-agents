@@ -37,7 +37,7 @@ def main():
             version = manifest.get('version')
             if not isinstance(version, str) or not VERSION.fullmatch(version) or not isinstance(manifest.get('notes'), str) or len(manifest['notes']) > 30000:
                 raise ValueError('Invalid release metadata')
-            expected = {'latest.json', 'latest.yml'} | {f'linggao-ai-{version}-{suffix}' for suffix in ('win-x64.exe', 'mac-arm64.dmg', 'mac-x64.dmg')}
+            expected = {'latest.json', 'latest.yml', 'latest-mac.yml'} | {f'linggao-ai-{version}-{suffix}' for suffix in ('win-x64.exe', 'mac-arm64.dmg', 'mac-x64.dmg', 'mac-arm64.zip', 'mac-x64.zip')}
             if {entry.name for entry in staging.iterdir()} != expected or any((staging / name).stat().st_size == 0 for name in expected):
                 raise ValueError('Missing or unexpected release files')
             current = ROOT / 'latest.json'

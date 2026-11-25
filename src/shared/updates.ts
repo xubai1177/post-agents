@@ -2,7 +2,7 @@ import type { Result } from './settings'
 export type UpdateState = {
   currentVersion: string
   platform: 'windows' | 'mac' | 'unsupported'
-  status: 'idle' | 'checking' | 'current' | 'available' | 'downloading' | 'downloaded' | 'error'
+  status: 'idle' | 'checking' | 'current' | 'available' | 'downloading' | 'downloaded' | 'installing' | 'error'
   version?: string
   notes?: string
   progress?: number

@@ -5,9 +5,9 @@ import { decodeBackup, restoreBackup } from '../features/workspace/backup'
 import { exportStreamBackup, isStreamBackup, restoreStreamBackup, verifyStreamBackup } from '../features/workspace/stream-backup'
 import { settingsForBackup, switchWorkspace, restoreWorkspaceSettings, listWorkspaces } from '../features/settings/settings'
 import { isImageStyle } from '../../shared/image-styles'
-import { isWorkspaceNodeId, type WorkspaceChange } from '../../shared/workspace'
+import { isWorkspaceNodeId, type DeleteNodesPlan, type WorkspaceChange } from '../../shared/workspace'
 import { getDraftsDirectory } from '../features/settings/settings'
-import { changeWorkspaceIndex, deleteWorkspaceArticle, readWorkspaceIndex } from '../features/workspace/workspace-index'
+import { changeWorkspaceIndex, ensureWorkspaceIndex, deleteWorkspaceArticle, deleteWorkspaceNodes, previewDeleteNodes, readWorkspaceIndex } from '../features/workspace/workspace-index'
 import { respond } from './security'
 import { articleQueue } from '../composition'
 
@@ -15,6 +15,8 @@ function validate(value: unknown): value is WorkspaceChange {
   if (!value || typeof value !== 'object') return false
   const change = value as Record<string, unknown>
   const str = (v: unknown) => typeof v === 'string' && v.length <= 200
+  if (change.type === 'setGenerationFolder') return str(change.id)
+  if (change.type === 'ensureTopicFolder') return str(change.batchId) && /^[a-zA-Z0-9-]{1,80}$/.test(change.batchId as string) && str(change.name) && str(change.parentId)
   if (change.type === 'create') return str(change.name) && (change.parentId === null || str(change.parentId))
   if (change.type === 'rename') return str(change.id) && str(change.name)
   if (change.type === 'delete') return str(change.id)
@@ -36,7 +38,19 @@ export function registerWorkspace(): void {
   }))
   ipcMain.handle('workspace:read', (event) => respond(event, async () => {
     const directory = await getDraftsDirectory()
-    return { ...await readWorkspaceIndex(directory), directory }
+    return { ...await ensureWorkspaceIndex(directory), directory }
+  }))
+  const validNodes = (nodes: unknown): nodes is import('../../shared/workspace').WorkspaceNodeId[] => Array.isArray(nodes) && nodes.length > 0 && nodes.length <= 1000 && nodes.every(isWorkspaceNodeId)
+  ipcMain.handle('workspace:preview-delete-nodes', (event, nodes: unknown) => respond(event, async () => {
+    if (!validNodes(nodes)) throw new Error('工作区操作：删除项目无效。')
+    try { return await previewDeleteNodes(await getDraftsDirectory(), nodes) } catch (error) { throw new Error(`工作区操作：${error instanceof Error ? error.message : '无法读取删除范围。'}`) }
+  }))
+  ipcMain.handle('workspace:delete-nodes', (event, value: unknown) => respond(event, async () => {
+    if (!value || typeof value !== 'object') throw new Error('工作区操作：删除范围无效。')
+    const plan = value as Partial<DeleteNodesPlan>
+    if (!validNodes(plan.nodes) || !Array.isArray(plan.folderIds) || !Array.isArray(plan.articleIds) || !plan.folderIds.every(id => typeof id === 'string') || !plan.articleIds.every(id => typeof id === 'string')) throw new Error('工作区操作：删除范围无效。')
+    const root = await getDraftsDirectory()
+    try { return await deleteWorkspaceNodes(root, { nodes: plan.nodes, folderIds: plan.folderIds, articleIds: plan.articleIds }, id => articleQueue.isActive(root, id)) } catch (error) { throw new Error(`工作区操作：${error instanceof Error ? error.message : '删除失败。'}`) }
   }))
   ipcMain.handle('workspace:delete-article', (event, id: unknown) => respond(event, async () => {
     if (typeof id !== 'string' || !id || id.length > 255) throw new Error('工作区操作：文章路径无效。')

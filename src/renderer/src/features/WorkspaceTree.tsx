@@ -6,12 +6,12 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useEffect, useRef, useState, type DragEvent, type FormEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import type { ArticleRun, Draft, Platform } from '../../../shared/drafts'
-import { isWorkspaceNodeId, workspaceChildren, type WorkspaceChange, type WorkspaceFolder, type WorkspaceIndex, type WorkspaceNodeId } from '../../../shared/workspace'
+import { isWorkspaceNodeId, workspaceChildren, type DeleteNodesPlan, type DeleteNodesResult, type WorkspaceChange, type WorkspaceFolder, type WorkspaceIndex, type WorkspaceNodeId } from '../../../shared/workspace'
 import { Icon } from '../components/Icon'
 import { useMessage } from '../components/MessageProvider'
 import { platformLogos } from './platform-logos'
 
-type Props = { drafts: Draft[]; articleRuns: ArticleRun[]; selectedId: string; selectedPlatform: Platform; platformTitles: Record<string, { value: string }>; enabled: boolean; refreshKey: number; createRequest: number; onOpen: (draft: Draft, platform: Platform) => void; selectedFolderId: string | null; onOpenFolder: (id: string) => void; onIndexChange: (index: WorkspaceIndex) => void; onCreateArticle: (folderId: string) => void; onDeleteArticle: (draft: Draft) => Promise<boolean>; onDeleteArticles: (drafts: Draft[]) => Promise<string[]> }
+type Props = { drafts: Draft[]; articleRuns: ArticleRun[]; selectedId: string; selectedPlatform: Platform; platformTitles: Record<string, { value: string }>; enabled: boolean; refreshKey: number; createRequest: number; onOpen: (draft: Draft, platform: Platform) => void; selectedFolderId: string | null; onOpenFolder: (id: string) => void; onIndexChange: (index: WorkspaceIndex) => void; onCreateArticle: (folderId: string) => void; onDeleteNodes: (plan: DeleteNodesPlan) => Promise<DeleteNodesResult | null> }
 type Editor = { type: 'create'; parentId: string | null } | { type: 'rename'; folder: WorkspaceFolder }
 type DraggedNode = { node: WorkspaceNodeId; parentId: string | null; draftId?: string }
 type DropChange = Extract<WorkspaceChange, { type: 'reorder' | 'moveDraft' }>
@@ -25,14 +25,14 @@ function readExpandedNodes(key: string): Set<string> {
   return new Set()
 }
 
-export function WorkspaceTree({ drafts, articleRuns, selectedId, selectedPlatform, platformTitles, enabled, refreshKey, createRequest, onOpen, selectedFolderId, onOpenFolder, onIndexChange, onCreateArticle, onDeleteArticle, onDeleteArticles }: Props) {
+export function WorkspaceTree({ drafts, articleRuns, selectedId, selectedPlatform, platformTitles, enabled, refreshKey, createRequest, onOpen, selectedFolderId, onOpenFolder, onIndexChange, onCreateArticle, onDeleteNodes }: Props) {
   const showMessage = useMessage()
   const [index, setIndex] = useState<WorkspaceIndex>({ version: 1, folders: [], assignments: {}, titles: {}, imageStyles: {} })
   const [expandedNodes, setExpandedNodes] = useState<ReadonlySet<string>>(() => new Set())
   const expansion = useRef<{ key: string; nodes: ReadonlySet<string> }>({ key: '', nodes: expandedNodes })
   const [message, setMessage] = useState('')
   const [selectedNodes, setSelectedNodes] = useState<ReadonlySet<WorkspaceNodeId>>(new Set())
-  const [confirmBatchDelete, setConfirmBatchDelete] = useState(false)
+  const [deletePlan, setDeletePlan] = useState<DeleteNodesPlan | null>(null)
   const anchorNode = useRef<WorkspaceNodeId | null>(null)
   const treeRoot = useRef<HTMLDivElement>(null)
   function visibleNodes(): WorkspaceNodeId[] {
@@ -52,9 +52,6 @@ export function WorkspaceTree({ drafts, articleRuns, selectedId, selectedPlatfor
     } else setSelectedNodes(new Set([node]))
     anchorNode.current = node
   }
-  function selectedTopFolders() {
-    return index.folders.filter(folder => selectedNodes.has(`folder:${folder.id}`) && !hasSelectedAncestor(folder.parentId))
-  }
   function hasSelectedAncestor(parentId: string | null): boolean {
     while (parentId) { if (selectedNodes.has(`folder:${parentId}`)) return true; parentId = index.folders.find(folder => folder.id === parentId)?.parentId ?? null }
     return false
@@ -63,35 +60,30 @@ export function WorkspaceTree({ drafts, articleRuns, selectedId, selectedPlatfor
     const ok = await change({ type: 'moveNodes', nodes: [...selectedNodes], folderId })
     if (ok) { setSelectedNodes(new Set()); showMessage('所选项目已移动。') }
   }
-  async function deleteSelection() {
-    if (pending || deletingSelection.current) return
-    deletingSelection.current = true
-    const articles = drafts.filter(draft => selectedNodes.has(`article:${draft.id}`))
-    const folders = selectedTopFolders()
-    const completed = new Set<WorkspaceNodeId>()
+  async function beginDelete(nodes: WorkspaceNodeId[]) {
+    if (pending || !enabled) return
+    setPending(true); setMessage('')
     try {
-      const deleted = await onDeleteArticles(articles)
-      for (const id of deleted) completed.add(`article:${id}`)
-      setPending(true)
-      for (const folder of folders) {
-        try {
-          const result = await window.workspaceApi.change({ type: 'delete', id: folder.id })
-          if (!result.ok) { showMessage(`${folder.name}：${result.error}`, true); continue }
-          setIndex(result.value); onIndexChange(result.value); completed.add(`folder:${folder.id}`)
-          for (const child of index.folders) { let parent: string | null = child.id; while (parent) { if (parent === folder.id) { completed.add(`folder:${child.id}`); break }; parent = index.folders.find(item => item.id === parent)?.parentId ?? null } }
-        } catch { showMessage(`${folder.name}：删除失败，请重试。`, true) }
-      }
-      if (folders.length && folders.every(folder => completed.has(`folder:${folder.id}`))) showMessage('所选文件夹已删除。')
-    } finally {
+      const result = await window.workspaceApi.previewDeleteNodes(nodes)
+      if (result.ok) setDeletePlan(result.value)
+      else showMessage(result.error, true)
+    } catch { showMessage('无法读取删除范围，请重试。', true) }
+    finally { setPending(false) }
+  }
+  async function deleteSelection() {
+    if (!deletePlan || deletingSelection.current) return
+    deletingSelection.current = true
+    try {
+      const result = await onDeleteNodes(deletePlan)
+      if (!result) { setDeletePlan(null); return }
+      const completed = new Set<WorkspaceNodeId>([...result.deletedFolderIds.map((id): WorkspaceNodeId => `folder:${id}`), ...result.deletedArticleIds.map((id): WorkspaceNodeId => `article:${id}`)])
       setSelectedNodes(current => new Set([...current].filter(node => !completed.has(node))))
-      setConfirmBatchDelete(false); setPending(false); deletingSelection.current = false
-    }
+      setDeletePlan(null)
+    } finally { deletingSelection.current = false }
   }
 
   const [editor, setEditor] = useState<Editor | null>(null)
   const [name, setName] = useState('')
-  const [removing, setRemoving] = useState<WorkspaceFolder | null>(null)
-  const [removingArticle, setRemovingArticle] = useState<Draft | null>(null)
   const [pending, setPending] = useState(false)
   const draggedNode = useRef<DraggedNode | null>(null)
   const draggedSelection = useRef(false)
@@ -105,11 +97,11 @@ export function WorkspaceTree({ drafts, articleRuns, selectedId, selectedPlatfor
   const savingName = useRef(false)
   const cancelNameBlur = useRef(false)
   useEffect(() => {
-    if (lastCreateRequest.current !== createRequest && !pending) { lastCreateRequest.current = createRequest; setMessage(''); setRemoving(null); setName(''); setEditor({ type: 'create', parentId: null }) }
+    if (lastCreateRequest.current !== createRequest && !pending) { lastCreateRequest.current = createRequest; setMessage(''); setName(''); setEditor({ type: 'create', parentId: null }) }
   }, [createRequest, pending])
   useEffect(() => {
     let active = true
-    setEditor(null); setRemoving(null); setRemovingArticle(null); setFolderMenu(null); setArticleMenu(null); setMessage('')
+    setEditor(null); setFolderMenu(null); setArticleMenu(null); setMessage('')
     void window.workspaceApi.read().then((result) => {
       if (!active) return
       if (result.ok) {
@@ -139,10 +131,6 @@ export function WorkspaceTree({ drafts, articleRuns, selectedId, selectedPlatfor
     else nodes.delete(node)
     saveExpandedNodes(nodes)
   }
-  function toggleNode(event: ReactMouseEvent<HTMLElement>, node: string) {
-    event.preventDefault()
-    setNodeOpen(node, !expansion.current.nodes.has(node))
-  }
   async function change(value: WorkspaceChange): Promise<boolean> {
     if (pending) return false
     setPending(true)
@@ -164,8 +152,8 @@ export function WorkspaceTree({ drafts, articleRuns, selectedId, selectedPlatfor
       return false
     } finally { setPending(false) }
   }
-  function beginCreate(parentId: string | null) { setMessage(''); setRemoving(null); setName(''); setEditor({ type: 'create', parentId }) }
-  function beginRename(folder: WorkspaceFolder) { setMessage(''); setRemoving(null); setName(folder.name); setEditor({ type: 'rename', folder }) }
+  function beginCreate(parentId: string | null) { setMessage(''); setName(''); setEditor({ type: 'create', parentId }) }
+  function beginRename(folder: WorkspaceFolder) { setMessage(''); setName(folder.name); setEditor({ type: 'rename', folder }) }
   async function commitName() {
     if (!editor || savingName.current || cancelNameBlur.current) return
     if (!name.trim()) { setEditor((current) => current === editor ? null : current); setMessage(''); return }
@@ -174,12 +162,6 @@ export function WorkspaceTree({ drafts, articleRuns, selectedId, selectedPlatfor
     try { if (await change(value)) setEditor((current) => current === editor ? null : current) } finally { savingName.current = false }
   }
   function saveName(event: FormEvent) { event.preventDefault(); void commitName() }
-  async function remove() { if (removing && await change({ type: 'delete', id: removing.id })) setRemoving(null) }
-  async function removeArticle() {
-    if (!removingArticle || !await onDeleteArticle(removingArticle)) return
-    setNodeOpen(`article:${removingArticle.id}`, false)
-    setRemovingArticle(null)
-  }
   function startDrag(event: DragEvent, source: DraggedNode) {
     if (!enabled || pending) { event.preventDefault(); return }
     if (!selectedNodes.has(source.node)) { setSelectedNodes(new Set([source.node])); anchorNode.current = source.node }
@@ -207,8 +189,8 @@ export function WorkspaceTree({ drafts, articleRuns, selectedId, selectedPlatfor
     }
     const destination = (row ?? event.target).closest<HTMLElement>('[data-drop-folder]')
     const folderId = destination?.dataset.dropFolder || null
-    if (batchDrag && destination && (!folderId || !selectedNodes.has(`folder:${folderId}`))) return { type: 'moveDraft', draftId: source.draftId ?? '', folderId }
-    if (source.draftId && destination && source.parentId !== folderId) return { type: 'moveDraft', draftId: source.draftId, folderId }
+    if (batchDrag && destination && (folderId || [...selectedNodes].every(node => node.startsWith('folder:'))) && (!folderId || !selectedNodes.has(`folder:${folderId}`))) return { type: 'moveDraft', draftId: source.draftId ?? '', folderId }
+    if (source.draftId && destination && folderId && source.parentId !== folderId) return { type: 'moveDraft', draftId: source.draftId, folderId }
     return null
   }
   function dragOver(event: DragEvent) {
@@ -237,6 +219,8 @@ export function WorkspaceTree({ drafts, articleRuns, selectedId, selectedPlatfor
   }
   function openArticleMenu(draft: Draft, x: number, y: number, element: HTMLElement) {
     if (!enabled || pending) return
+    const node: WorkspaceNodeId = `article:${draft.id}`
+    if (!selectedNodes.has(node)) { setSelectedNodes(new Set([node])); anchorNode.current = node }
     menuSummaryRef.current = element; restoreMenuFocus.current = true; setFolderMenu(null)
     setArticleMenu({ draft, x: Math.max(8, Math.min(x, window.innerWidth - 225)), y: Math.max(8, Math.min(y, window.innerHeight - 230)) })
   }
@@ -248,11 +232,12 @@ export function WorkspaceTree({ drafts, articleRuns, selectedId, selectedPlatfor
     const node = `article:${draft.id}` as const
     return <div className="workspace-draft" key={node} draggable={enabled && !pending}
       onDragStart={(event) => startDrag(event, { node, parentId: folderId, draftId: draft.id })}>
+      <Button variant="ghost" type="button" className="workspace-expand" aria-label={`${expandedNodes.has(node) ? '收起' : '展开'}${titledDraft.title}`} aria-expanded={expandedNodes.has(node)} disabled={!enabled || pending} onClick={() => setNodeOpen(node, !expandedNodes.has(node))}><Icon name="chevron" size={14}/></Button>
       <details open={expandedNodes.has(node)} className="workspace-folder workspace-topic">
         <summary title={titledDraft.title}
           data-tree-node={node} data-tree-parent={folderId ?? ''}
-          aria-label={`${titledDraft.title}${selectedNodes.has(node) ? "，已选择" : ""}`} data-drop-position={dropPosition(node)} data-selected={selectedNodes.has(node) || undefined}
-          onClick={(event) => { selectNode(event, node); if (!event.ctrlKey && !event.metaKey && !event.shiftKey) toggleNode(event, node); else event.preventDefault() }}
+          aria-label={`${titledDraft.title}${selectedNodes.has(node) ? '，已选择' : ''}${selectedId === draft.id ? '，当前文章' : ''}`} data-current={selectedId === draft.id || undefined} data-drop-position={dropPosition(node)} data-selected={selectedNodes.has(node) || undefined}
+          onClick={(event) => { event.preventDefault(); if (!enabled || pending) return; selectNode(event, node); if (!event.ctrlKey && !event.metaKey && !event.shiftKey) onOpen(draft, selectedId === draft.id ? selectedPlatform : draft.platforms[0]) }}
           onContextMenu={(event) => {
             event.preventDefault()
             event.stopPropagation()
@@ -272,7 +257,7 @@ export function WorkspaceTree({ drafts, articleRuns, selectedId, selectedPlatfor
         </summary>
         <div className="workspace-children">{draft.platforms.map(platform => <Button variant="ghost" type="button" key={platform}
           className={`note-item ${selectedId === draft.id && selectedPlatform === platform ? 'active' : ''}`}
-          disabled={!enabled || pending} onClick={() => onOpen(draft, platform)}
+          disabled={!enabled || pending} onClick={() => { setSelectedNodes(new Set([node])); anchorNode.current = node; onOpen(draft, platform) }}
           aria-label={`${platform}：${platformTitles[`${draft.id}:${platform}`]?.value ?? titledDraft.title}`}
           aria-current={selectedId === draft.id && selectedPlatform === platform ? 'page' : undefined}>
           <img className="platform-logo" src={platformLogos[platform]} alt="" aria-hidden="true"/><span>{platformTitles[`${draft.id}:${platform}`]?.value ?? titledDraft.title}</span>
@@ -280,6 +265,7 @@ export function WorkspaceTree({ drafts, articleRuns, selectedId, selectedPlatfor
       </details>
       <Button variant="ghost" type="button" className="tree-more" aria-label={`${titledDraft.title}的操作`}
         aria-expanded={articleMenu?.draft.id === draft.id} disabled={!enabled || pending}
+        onContextMenu={event => { event.preventDefault(); event.stopPropagation(); openArticleMenu(titledDraft, event.clientX, event.clientY, event.currentTarget) }}
         onClick={(event) => {
           const rect = event.currentTarget.getBoundingClientRect()
           openArticleMenu(titledDraft, rect.right, rect.bottom, event.currentTarget)
@@ -288,6 +274,8 @@ export function WorkspaceTree({ drafts, articleRuns, selectedId, selectedPlatfor
   }
   function openMenu(folder: WorkspaceFolder, x: number, y: number, summary: HTMLElement) {
     if (!enabled || pending) return
+    const node: WorkspaceNodeId = `folder:${folder.id}`
+    if (!selectedNodes.has(node)) { setSelectedNodes(new Set([node])); anchorNode.current = node }
     menuSummaryRef.current = summary; restoreMenuFocus.current = true; setArticleMenu(null)
     setFolderMenu({ folder, x: Math.max(8, Math.min(x, window.innerWidth - 165)), y: Math.max(8, Math.min(y, window.innerHeight - 165)) })
   }
@@ -312,8 +300,10 @@ export function WorkspaceTree({ drafts, articleRuns, selectedId, selectedPlatfor
             onDragStart={(event) => startDrag(event, { node, parentId })}
             aria-current={selectedFolderId === folder.id ? 'page' : undefined}
             onClick={(event) => {
+              event.preventDefault()
+              if (!enabled || pending) return
               selectNode(event, node)
-              if (!event.ctrlKey && !event.metaKey && !event.shiftKey) { toggleNode(event, node); if (enabled && !pending) onOpenFolder(folder.id) } else event.preventDefault()
+              if (!event.ctrlKey && !event.metaKey && !event.shiftKey) { setNodeOpen(node, !expandedNodes.has(node)); onOpenFolder(folder.id) }
             }}
             onContextMenu={(event) => contextMenu(event, folder)}
             onKeyDown={(event) => {
@@ -322,14 +312,14 @@ export function WorkspaceTree({ drafts, articleRuns, selectedId, selectedPlatfor
                 const rect = event.currentTarget.getBoundingClientRect()
                 openMenu(folder, rect.left, rect.bottom, event.currentTarget)
               }
-            }}><Icon name="folder" size={16}/><span>{folder.name}</span></summary>
+            }}><Icon name={expandedNodes.has(node) ? "folderOpen" : "folder"} size={16}/><span>{folder.name}</span></summary>
           <div className="workspace-children">
             {editor?.type === 'create' && editor.parentId === folder.id && folderEditor()}
             {treeChildren(folder.id)}
           </div>
         </details>
         <Button variant="ghost" type="button" className="tree-more" aria-label={`${folder.name}的操作`} aria-expanded={folderMenu?.folder.id === folder.id}
-          disabled={!enabled || pending} onClick={(event) => {
+          disabled={!enabled || pending} onContextMenu={event => { event.preventDefault(); event.stopPropagation(); openMenu(folder, event.clientX, event.clientY, event.currentTarget) }} onClick={(event) => {
             const rect = event.currentTarget.getBoundingClientRect()
             openMenu(folder, rect.right, rect.bottom, event.currentTarget)
           }}>⋯</Button>
@@ -338,6 +328,8 @@ export function WorkspaceTree({ drafts, articleRuns, selectedId, selectedPlatfor
   }
   function closeMenu() { setFolderMenu(null); setArticleMenu(null) }
   const openAction = folderMenu ?? articleMenu
+  const menuNode: WorkspaceNodeId | null = folderMenu ? `folder:${folderMenu.folder.id}` : articleMenu ? `article:${articleMenu.draft.id}` : null
+  const batchMenu = !!menuNode && selectedNodes.size > 1 && selectedNodes.has(menuNode)
   function reorderMenu(node: WorkspaceNodeId, parentId: string | null) {
     const siblings = workspaceChildren(index, drafts, parentId)
     const position = siblings.findIndex(item => item.id === node)
@@ -351,14 +343,13 @@ export function WorkspaceTree({ drafts, articleRuns, selectedId, selectedPlatfor
   }
   return <div className="workspace-tree" ref={treeRoot} onKeyDown={event => {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a' && event.target instanceof HTMLElement && event.target.matches('summary[data-tree-node]')) { event.preventDefault(); setSelectedNodes(new Set(visibleNodes())) }
-    if (event.key === 'Escape' && !editor && !openAction && !confirmBatchDelete) setSelectedNodes(new Set())
-    if ((event.key === 'Delete' || event.key === 'Backspace') && selectedNodes.size && event.target instanceof HTMLElement && event.target.matches('summary[data-tree-node]')) { event.preventDefault(); setConfirmBatchDelete(true) }
+    if (event.key === 'Escape' && !editor && !openAction && !deletePlan) { setSelectedNodes(new Set()); anchorNode.current = null }
+    if ((event.key === 'Delete' || event.key === 'Backspace') && selectedNodes.size && event.target instanceof HTMLElement && event.target.matches('summary[data-tree-node]')) { event.preventDefault(); void beginDelete([...selectedNodes]) }
   }}>
-    {selectedNodes.size > 0 && <div className="workspace-selection" role="group" aria-label="所选目录项操作"><span aria-live="polite">已选 {selectedNodes.size} 项</span>
-      <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" type="button" disabled={!enabled || pending}>移动到…</Button></DropdownMenuTrigger><DropdownMenuContent className="workspace-action-menu" align="start"><DropdownMenuItem onSelect={() => void moveSelection(null)}>根目录</DropdownMenuItem>{index.folders.map(folder => <DropdownMenuItem key={folder.id} title={folderPath(folder)} disabled={selectedNodes.has(`folder:${folder.id}`) || hasSelectedAncestor(folder.parentId)} onSelect={() => void moveSelection(folder.id)}><span className="truncate">{folderPath(folder)}</span></DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu>
-      <Button variant="ghost" type="button" disabled={!enabled || pending} onClick={() => setConfirmBatchDelete(true)}>删除</Button><Button variant="ghost" type="button" aria-label="取消选择" onClick={() => setSelectedNodes(new Set())}>×</Button></div>}
-    {confirmBatchDelete && <div className="workspace-inline-form" role="group" aria-label="确认批量删除"><p>删除所选的 {selectedNodes.size} 项？所选文章及其正文、配图、来源和未保存修改将永久删除；文件夹及子文件夹会移除，其中未选中的文章移至根目录。</p><div><Button variant="destructive" type="button" disabled={!enabled || pending} onClick={() => void deleteSelection()}>确认删除</Button><Button variant="ghost" type="button" autoFocus onClick={() => setConfirmBatchDelete(false)}>取消</Button></div></div>}
-    {editor?.type === 'create' && editor.parentId === null && folderEditor()}{removing && <div className="workspace-inline-form" role="group" aria-label="确认删除目录"><p>删除“{removing.name}”及其子目录？文章会移至根目录，文件不会删除。</p><div><Button variant="ghost" type="button" disabled={pending} onClick={() => void remove()}>确认删除</Button><Button variant="ghost" type="button" disabled={pending} onClick={() => setRemoving(null)}>取消</Button></div></div>}{removingArticle && <div className="workspace-inline-form" role="group" aria-label="确认删除文章"><p>永久删除“{removingArticle.title}”？该文章所有平台的正文、配图、来源及未保存修改都会删除，无法恢复。</p><div><Button variant="destructive" type="button" className="workspace-delete-button" disabled={!enabled || pending} onClick={() => void removeArticle()}>确认删除</Button><Button variant="ghost" type="button" autoFocus disabled={!enabled || pending} onClick={() => setRemovingArticle(null)}>取消</Button></div></div>}{message && !editor && <p role="alert">{message}</p>}<div className={`workspace-root ${dropMarker === 'inside:' ? 'workspace-drop-target' : ''}`} data-drop-folder=""
+    <span className="sr-only" aria-live="polite">{selectedNodes.size > 1 ? `已选择 ${selectedNodes.size} 项` : ''}</span>
+    {deletePlan && <div className="workspace-inline-form" role="group" aria-label="确认永久删除"><p>永久删除{[deletePlan.folderIds.length ? `${deletePlan.folderIds.length} 个文件夹` : '', deletePlan.articleIds.length ? `${deletePlan.articleIds.length} 篇文章` : ''].filter(Boolean).join('和')}？{deletePlan.articleIds.length > 0 && '文章的正文、配图及来源都会删除。'}此操作无法恢复。</p><div><Button variant="destructive" type="button" disabled={!enabled || pending} onClick={() => void deleteSelection()}>永久删除</Button><Button variant="ghost" type="button" autoFocus disabled={!enabled || pending} onClick={() => setDeletePlan(null)}>取消</Button></div></div>}
+    {editor?.type === 'create' && editor.parentId === null && folderEditor()}{message && !editor && <p role="alert">{message}</p>}<div className={`workspace-root ${dropMarker === 'inside:' ? 'workspace-drop-target' : ''}`} data-drop-folder=""
+      onClick={event => { if (event.target === event.currentTarget || (event.target instanceof HTMLElement && event.target.classList.contains('workspace-root-drop'))) { setSelectedNodes(new Set()); anchorNode.current = null } }}
       onDragOver={dragOver} onDragEnd={endDrag} onDrop={drop}
       onDragLeave={(event) => { if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setDropMarker(null) }}>
       {treeChildren(null)}<div className="workspace-root-drop" aria-hidden="true" /></div>{openAction && <DropdownMenu open modal={false} onOpenChange={open => { if (!open) closeMenu() }}>
@@ -366,7 +357,7 @@ export function WorkspaceTree({ drafts, articleRuns, selectedId, selectedPlatfor
         <span aria-hidden="true" className="workspace-menu-anchor" style={{ left: openAction.x, top: openAction.y }}/>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" sideOffset={0} className="workspace-action-menu"
-        aria-label={`${folderMenu?.folder.name ?? articleMenu?.draft.title}的操作`}
+        aria-label={batchMenu ? `${selectedNodes.size} 个所选项目的操作` : `${folderMenu?.folder.name ?? articleMenu?.draft.title}的操作`}
         onCloseAutoFocus={event => {
           event.preventDefault()
           const trigger = menuSummaryRef.current
@@ -375,7 +366,15 @@ export function WorkspaceTree({ drafts, articleRuns, selectedId, selectedPlatfor
             else trigger?.focus()
           }
         }}>
-        {folderMenu && <>
+        {batchMenu && <>
+          <DropdownMenuLabel>已选 {selectedNodes.size} 项</DropdownMenuLabel>
+          <DropdownMenuSub><DropdownMenuSubTrigger>移动所选项目…</DropdownMenuSubTrigger><DropdownMenuSubContent className="workspace-action-menu">
+            {[...selectedNodes].every(node => node.startsWith('folder:')) && <DropdownMenuItem onSelect={() => void moveSelection(null)}>根目录</DropdownMenuItem>}
+            {index.folders.map(folder => <DropdownMenuItem key={folder.id} title={folderPath(folder)} disabled={selectedNodes.has(`folder:${folder.id}`) || hasSelectedAncestor(folder.parentId)} onSelect={() => void moveSelection(folder.id)}><span className="truncate">{folderPath(folder)}</span></DropdownMenuItem>)}
+          </DropdownMenuSubContent></DropdownMenuSub>
+          <DropdownMenuItem variant="destructive" onSelect={() => { restoreMenuFocus.current = false; void beginDelete([...selectedNodes]) }}>删除所选项目…</DropdownMenuItem>
+        </>}
+        {!batchMenu && folderMenu && <>
           {reorderMenu(`folder:${folderMenu.folder.id}`, folderMenu.folder.parentId)}
           <DropdownMenuItem onSelect={() => {
             restoreMenuFocus.current = false
@@ -392,17 +391,15 @@ export function WorkspaceTree({ drafts, articleRuns, selectedId, selectedPlatfor
             beginRename(folderMenu.folder)
           }}>重命名</DropdownMenuItem>
           <DropdownMenuItem variant="destructive" onSelect={() => {
-            setEditor(null); setMessage(''); setRemoving(folderMenu.folder)
+            setEditor(null); setMessage(''); void beginDelete([`folder:${folderMenu.folder.id}`])
           }}>删除文件夹</DropdownMenuItem>
         </>}
-        {articleMenu && <>
+        {!batchMenu && articleMenu && <>
           {reorderMenu(`article:${articleMenu.draft.id}`, index.assignments[articleMenu.draft.id] ?? null)}
           <DropdownMenuSub>
             <DropdownMenuSubTrigger>移动到…</DropdownMenuSubTrigger>
             <DropdownMenuSubContent className="workspace-action-menu">
               <DropdownMenuLabel>移动到</DropdownMenuLabel>
-              <DropdownMenuItem disabled={!index.assignments[articleMenu.draft.id]}
-                onSelect={() => void change({ type: 'moveDraft', draftId: articleMenu.draft.id, folderId: null })}>根目录</DropdownMenuItem>
               {index.folders.map(folder => <DropdownMenuItem key={folder.id} title={folderPath(folder)}
                 disabled={index.assignments[articleMenu.draft.id] === folder.id}
                 onSelect={() => void change({ type: 'moveDraft', draftId: articleMenu.draft.id, folderId: folder.id })}>
@@ -412,7 +409,7 @@ export function WorkspaceTree({ drafts, articleRuns, selectedId, selectedPlatfor
           </DropdownMenuSub>
           <DropdownMenuItem variant="destructive" onSelect={() => {
             restoreMenuFocus.current = false
-            setEditor(null); setRemoving(null); setMessage(''); setRemovingArticle(articleMenu.draft)
+            setEditor(null); setMessage(''); void beginDelete([`article:${articleMenu.draft.id}`])
           }}>删除文章</DropdownMenuItem>
         </>}
       </DropdownMenuContent>

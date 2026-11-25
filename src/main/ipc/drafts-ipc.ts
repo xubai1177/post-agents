@@ -1,7 +1,7 @@
 import { ipcMain, shell, type WebContents } from 'electron'
 import { platforms, type CreateRequest, type CreateResult, type Platform } from '../../shared/drafts'
 import { getDraftsDirectory } from '../features/settings/settings'
-import { listDrafts, readDraft, saveDraft, readPlatformTitle, savePlatformTitle } from '../features/drafts/draft-store'
+import { listDraftActivity, listDrafts, readDraft, saveDraft, readPlatformTitle, savePlatformTitle } from '../features/drafts/draft-store'
 import { readResearch, readPlatformResearch } from '../features/research/research'
 import { articleQueue, createContent, onArticleQueueChanged, regenerateArticle, optimizeArticle, createTitles, testPlatformRules } from '../composition'
 import { generateDrafts } from '../features/content/generation'
@@ -11,7 +11,7 @@ import { respond } from './security'
 import { notifyGeneration } from '../infrastructure/notifications'
 import type { GenerationProgress } from '../../shared/research'
 import { isImageStyle } from '../../shared/image-styles'
-import { changeWorkspaceIndex } from '../features/workspace/workspace-index'
+import { changeWorkspaceIndex, ensureWorkspaceIndex } from '../features/workspace/workspace-index'
 
 const articleListeners = new Set<WebContents>()
 function trackArticleListener(sender: WebContents): void {
@@ -57,14 +57,20 @@ export function registerDrafts(): void {
     if (!validateRequest(input.request) || !isImageStyle(input.imageStyle) || typeof input.generateImages !== 'boolean' || !(input.folderId === null || (typeof input.folderId === 'string' && /^[a-zA-Z0-9-]{1,80}$/.test(input.folderId)))) throw new Error('文章操作：创建参数无效。')
     const root = await getDraftsDirectory()
     if (!root) throw new Error('请先在设置中选择草稿目录。')
+    const workspace = await ensureWorkspaceIndex(root)
+    const folderId = input.folderId ?? workspace.generationFolderId ?? workspace.defaultFolderId
+    if (!folderId || !workspace.folders.some(folder => folder.id === folderId)) throw new Error('文章操作：保存文件夹已不存在，请重新选择。')
     await assertAvailableArticleTitle(root, input.request.title)
     trackArticleListener(event.sender)
-    const draft = await articleQueue.start(root, { request: input.request, imageStyle: input.imageStyle, generateImages: input.generateImages, folderId: input.folderId })
+    const draft = await articleQueue.start(root, { request: input.request, imageStyle: input.imageStyle, generateImages: input.generateImages, folderId })
     let warning: string | undefined
-    try {
-      await changeWorkspaceIndex(root, { type: 'setImageStyle', draftId: draft.id, style: input.imageStyle })
-      if (input.folderId) await changeWorkspaceIndex(root, { type: 'moveDraft', draftId: draft.id, folderId: input.folderId })
-    } catch { warning = '文章已创建，但文件夹或图片风格保存失败，请检查设置。' }
+    try { await changeWorkspaceIndex(root, { type: 'moveDraft', draftId: draft.id, folderId }) }
+    catch {
+      try { const fallback = await ensureWorkspaceIndex(root); if (fallback.defaultFolderId) await changeWorkspaceIndex(root, { type: 'moveDraft', draftId: draft.id, folderId: fallback.defaultFolderId }); warning = '目标文件夹不可用，文章已保存到未分类。' }
+      catch { warning = '文章已创建，但无法保存文件夹，请检查工作区并手动移动。' }
+    }
+    try { await changeWorkspaceIndex(root, { type: 'setImageStyle', draftId: draft.id, style: input.imageStyle }) }
+    catch { warning = [warning, '图片风格保存失败，请重新选择。'].filter(Boolean).join(' ') }
     return { draft, ...(warning ? { warning } : {}) }
   }))
   ipcMain.handle('drafts:retry-article', (event, id: unknown, skipResearch: unknown) => handle(event, async () => {
@@ -72,6 +78,7 @@ export function registerDrafts(): void {
     trackArticleListener(event.sender)
     await articleQueue.retry(await getDraftsDirectory(), id, skipResearch)
   }))
+  ipcMain.handle('drafts:activity', (event) => handle(event, async () => listDraftActivity(await getDraftsDirectory())))
   ipcMain.handle('drafts:list', (event) => handle(event, async () => listDrafts(await getDraftsDirectory())))
   ipcMain.handle('drafts:read', (event, id: unknown, platform: unknown) => handle(event, async () => {
     if (typeof id !== 'string' || !isPlatform(platform)) throw new Error('invalid input')

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { lstat, mkdir, readFile, readdir, rename, rm, rmdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { platforms, type Draft, type Document, type Platform } from '../../../shared/drafts'
+import { platforms, type Draft, type DraftActivity, type Document, type Platform } from '../../../shared/drafts'
 
 let saveQueue: Promise<unknown> = Promise.resolve()
 function validName(value: string): boolean { return !!value && value !== '.' && value !== '..' && !value.includes('/') && !value.includes('\\') && !value.includes('\0') }
@@ -27,6 +27,21 @@ export async function listDrafts(root: string): Promise<Draft[]> {
     if (found.length) results.push({ id: item.name, title: item.name, platforms: found })
   }
   return results.sort((a, b) => a.title.localeCompare(b.title, 'zh-CN'))
+}
+export async function listDraftActivity(root: string): Promise<DraftActivity[]> {
+  const drafts = await listDrafts(root)
+  const result: DraftActivity[] = []
+  for (const draft of drafts) {
+    let latest = 0
+    for (const platform of draft.platforms) {
+      const path = await filePath(root, draft.id, platform)
+      const file = await lstat(path)
+      if (!file.isFile() || file.isSymbolicLink()) throw new Error('草稿文件无效。')
+      latest = Math.max(latest, file.mtimeMs)
+    }
+    if (latest > 0) result.push({ id: draft.id, updatedAt: new Date(latest).toISOString() })
+  }
+  return result.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id))
 }
 export async function readDraft(root: string, id: string, platform: Platform): Promise<Document> {
   const content = await readFile(await filePath(root, id, platform), 'utf8')

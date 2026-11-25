@@ -79,12 +79,15 @@ jobs:
         include:
           - os: windows-latest
             target: --win --x64
+            arch: x64
             artifact: windows-x64
           - os: macos-latest
             target: --mac --arm64
+            arch: arm64
             artifact: macos-arm64
           - os: macos-15-intel
             target: --mac --x64
+            arch: x64
             artifact: macos-x64
     runs-on: ${{ matrix.os }}
     steps:
@@ -98,11 +101,21 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - run: node --test tests/updates-manifest.test.cjs
       - run: npm run build
-      - name: Create installers
+      - name: Create Windows installer
+        if: runner.os == 'Windows'
         run: npx --yes electron-builder@26.0.12 ${{ matrix.target }} --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Create signed Mac installers
+        if: runner.os == 'macOS'
+        shell: bash
+        run: bash scripts/build-mac-release.sh --${{ matrix.arch }}
+        env:
+          LINGGAO_MAC_P12_BASE64: ${{ secrets.LINGGAO_MAC_P12_BASE64 }}
+          LINGGAO_MAC_P12_PASSWORD: ${{ secrets.LINGGAO_MAC_P12_PASSWORD }}
+          LINGGAO_MAC_CERT_SHA1: ${{ secrets.LINGGAO_MAC_CERT_SHA1 }}
       - name: Upload installers to draft release
         shell: bash
         env:
@@ -159,7 +172,10 @@ jobs:
           grep -Fxq latest.yml <<< "$ASSETS" || { echo "Missing latest.yml" >&2; exit 1; }
           VERIFY_DIR=$(mktemp -d)
           gh release download "$TAG" --dir "$VERIFY_DIR" --pattern latest.yml --pattern "linggao-ai-$VERSION-win-x64.exe"
-          node scripts/verify-update.cjs "$VERIFY_DIR" "$VERSION"
+          gh release download "$TAG" --dir "$VERIFY_DIR" --pattern "linggao-ai-$VERSION-mac-*.zip"
+          node scripts/create-mac-update.cjs "$VERIFY_DIR" "$VERSION"
+          node scripts/verify-update.cjs "$VERIFY_DIR" "$VERSION" --mac
+          gh release upload "$TAG" "$VERIFY_DIR/latest-mac.yml" --clobber
           gh release edit "$TAG" --draft=false --verify-tag
 
   publish-update-server:
@@ -193,9 +209,9 @@ jobs:
           printf '%s\n' "$UPDATE_SSH_KEY" > "$SSH_DIR/key"
           chmod 600 "$SSH_DIR/key"
           printf '%s\n' '39.106.162.75 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIH0QWGVHkUol547yBo1BOQmfWKINjG3yLWxXWy7OXRY1' > "$SSH_DIR/known_hosts"
-          gh release download "$TAG" --dir "$STAGE" --pattern latest.yml --pattern "linggao-ai-$VERSION-win-x64.exe" --pattern "linggao-ai-$VERSION-mac-arm64.dmg" --pattern "linggao-ai-$VERSION-mac-x64.dmg"
-          node scripts/verify-update.cjs "$STAGE" "$VERSION"
+          gh release download "$TAG" --dir "$STAGE" --pattern latest.yml --pattern latest-mac.yml --pattern "linggao-ai-$VERSION-win-x64.exe" --pattern "linggao-ai-$VERSION-mac-arm64.dmg" --pattern "linggao-ai-$VERSION-mac-x64.dmg" --pattern "linggao-ai-$VERSION-mac-arm64.zip" --pattern "linggao-ai-$VERSION-mac-x64.zip"
+          node scripts/verify-update.cjs "$STAGE" "$VERSION" --mac
           RELEASE_NOTES=$(gh release view "$TAG" --json body --jq .body)
           export VERSION RELEASE_NOTES STAGE
           node -e 'require("node:fs").writeFileSync(process.env.STAGE + "/latest.json", JSON.stringify({version: process.env.VERSION, notes: process.env.RELEASE_NOTES}))'
-          tar -C "$STAGE" -cf - latest.json latest.yml "linggao-ai-$VERSION-win-x64.exe" "linggao-ai-$VERSION-mac-arm64.dmg" "linggao-ai-$VERSION-mac-x64.dmg" | ssh -T -i "$SSH_DIR/key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$SSH_DIR/known_hosts" linggao-update@39.106.162.75
+          tar -C "$STAGE" -cf - latest.json latest.yml latest-mac.yml "linggao-ai-$VERSION-win-x64.exe" "linggao-ai-$VERSION-mac-arm64.dmg" "linggao-ai-$VERSION-mac-x64.dmg" "linggao-ai-$VERSION-mac-arm64.zip" "linggao-ai-$VERSION-mac-x64.zip" | ssh -T -i "$SSH_DIR/key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$SSH_DIR/known_hosts" linggao-update@39.106.162.75

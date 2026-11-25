@@ -1,0 +1,23 @@
+const test = require('node:test')
+const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
+const { spawnSync } = require('node:child_process')
+const { createHash } = require('node:crypto')
+const yaml = require('js-yaml')
+
+test('Mac 更新清单校验双架构文件并拒绝篡改', t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'linggao-update-test-'))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const version = '1.2.3', name = `linggao-ai-${version}-win-x64.exe`
+  const windows = Buffer.from('windows fixture'), sha512 = createHash('sha512').update(windows).digest('base64')
+  fs.writeFileSync(path.join(dir, name), windows)
+  fs.writeFileSync(path.join(dir, 'latest.yml'), yaml.dump({ version, files: [{ url: name, sha512, size: windows.length }], path: name, sha512 }))
+  for (const arch of ['arm64', 'x64']) fs.writeFileSync(path.join(dir, `linggao-ai-${version}-mac-${arch}.zip`), `fixture ${arch}`)
+  const run = (script, ...args) => spawnSync(process.execPath, [path.join(process.cwd(), 'scripts', script), dir, version, ...args], { encoding: 'utf8' })
+  assert.equal(run('create-mac-update.cjs').status, 0)
+  assert.equal(run('verify-update.cjs', '--mac').status, 0)
+  fs.appendFileSync(path.join(dir, `linggao-ai-${version}-mac-x64.zip`), 'tampered')
+  assert.notEqual(run('verify-update.cjs', '--mac').status, 0)
+})

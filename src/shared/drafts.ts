@@ -5,6 +5,7 @@ import type { PlatformPrompts } from './platform-prompts'
 export const platforms = ['小红书', '公众号', '抖音图文'] as const
 export type Platform = typeof platforms[number]
 export interface Draft { id: string; title: string; platforms: Platform[] }
+export interface DraftActivity { id: string; updatedAt: string }
 export interface Document { content: string; version: string }
 export interface CreateRequest { title: string; audience: string; angle?: string; instruction?: string; platforms: Platform[]; research: 'online' | 'skip' }
 export interface CreateResult { draft: Draft | null; failures: { platform: Platform; error: string }[]; warnings?: string[] }
@@ -18,6 +19,7 @@ export interface ArticleRun { imageProgress?: string; promptSnapshot?: PromptSna
 export interface StartArticleRequest { request: CreateRequest; imageStyle: ImageStyle; generateImages: boolean; folderId: string | null }
 export interface DraftsApi {
   list: () => Promise<Result<Draft[]>>
+  activity: () => Promise<Result<DraftActivity[]>>
   read: (id: string, platform: Platform) => Promise<Result<Document>>
   readTitle: (id: string, platform: Platform) => Promise<Result<string | null>>
   saveTitle: (id: string, platform: Platform, title: string, expected: string | null) => Promise<Result<string>>
