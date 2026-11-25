@@ -63,7 +63,7 @@ export function UpdateDialog({ updates }: { updates: Controls }) {
       {state.notes && <div className="max-h-64 overflow-auto rounded-md bg-muted p-3 text-sm leading-relaxed break-words"><strong>更新内容</strong><ReactMarkdown skipHtml disallowedElements={['a', 'img']} unwrapDisallowed>{state.notes}</ReactMarkdown></div>}
       {state.status === 'downloading' && <div className="text-sm"><label htmlFor="update-progress">正在下载更新 {state.progress ?? 0}%</label><progress id="update-progress" className="mt-2 w-full accent-primary" max={100} value={state.progress ?? 0}/></div>}
       <DialogFooter><Button variant="outline" onClick={() => updates.setOpen(false)}>稍后</Button>
-        {state.platform === 'mac' ? <Button onClick={() => void updates.action('openRelease')}>前往 GitHub 下载</Button> :
+        {state.platform === 'mac' ? <Button onClick={() => void updates.action('openRelease')}>下载 Mac 安装包</Button> :
           state.status === 'downloaded' ? <Button onClick={() => void updates.action('install')}>重启更新</Button> :
             <Button disabled={state.status === 'downloading'} onClick={() => void updates.action('download')}>{state.status === 'error' ? '重试下载' : '下载更新'}</Button>}
       </DialogFooter>

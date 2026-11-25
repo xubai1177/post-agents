@@ -59,7 +59,7 @@
 
 - 用户要求发布时，将 `package.json` 与锁文件中的版本和 `v版本号` 标签保持一致。发布前检查工作区、远端分支、测试及构建结果，避免包含无关改动。
 - 在 `release-notes/v版本号.md` 编写面向用户的中文更新内容，按实际变化说明新增或改进、安装方式及必要限制；发布工作流会使用该文件生成 Release 内容。
-- 推送版本标签后跟进 GitHub Actions，确认 Windows 和 Mac 安装包、Windows 更新描述文件及 Release 发布状态；失败时排查并报告实际验证结果。Windows 应用内升级需要用真实安装包验证。
+- 推送版本标签后跟进 GitHub Actions，确认 Windows 和 Mac 安装包、Windows 更新描述文件、Release 发布状态及更新服务器同步；失败时排查并报告实际验证结果。更新站点按项目隔离，灵稿 AI 使用 `https://update.dknx.top/linggao-ai/`。Windows 应用内升级需要用真实安装包验证。
 
 ## 交互原型
 

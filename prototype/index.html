@@ -857,12 +857,12 @@ function showUpdate(){
   progress.querySelector('span').textContent=`正在下载更新 ${updatePercent}%`;
   progress.querySelector('progress').value=updatePercent;
   primary.disabled=updateState==='downloading';
-  primary.textContent=updatePlatform==='mac'?'前往 GitHub 下载':updateState==='downloaded'?'重启更新':'下载更新';
+  primary.textContent=updatePlatform==='mac'?'下载 Mac 安装包':updateState==='downloaded'?'重启更新':'下载更新';
   if(!updateDialog.open)updateDialog.showModal();
 }
 document.getElementById('update-later').onclick=()=>updateDialog.close();
 document.getElementById('update-primary').onclick=()=>{
-  if(updatePlatform==='mac'){updateDialog.close();toast('示例交互：前往 GitHub 下载');return}
+  if(updatePlatform==='mac'){updateDialog.close();toast('示例交互：下载安装包');return}
   if(updateState==='downloaded'){updateDialog.close();toast('示例交互：重启并安装更新');return}
   updateState='downloading';updatePercent=0;showUpdate();
   updateTimer=setInterval(()=>{updatePercent=Math.min(100,updatePercent+10);if(updatePercent===100){clearInterval(updateTimer);updateState='downloaded';if(!updateDialog.open)toast('更新已下载，可在设置中重启更新。')}if(updateDialog.open)showUpdate()},180);

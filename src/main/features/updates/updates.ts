@@ -1,9 +1,9 @@
 import { app, BrowserWindow, ipcMain, net, shell } from 'electron'
 import { NsisUpdater } from 'electron-updater'
 import type { UpdateState } from '../../../shared/updates'
+import { fetchLatestRelease, updateOrigin } from './release-source'
 import { respond } from '../../ipc/security'
 
-const repo = 'xubai1177/post-agents'
 const updater = process.platform === 'win32' && app.isPackaged ? new NsisUpdater() : null
 if (updater) {
   updater.autoDownload = false
@@ -33,16 +33,11 @@ async function check(): Promise<UpdateState> {
   if (!app.isPackaged || state.platform === 'unsupported') return change({ status: 'error', error: '当前运行环境无法检查更新。', errorStage: 'check' })
   change({ status: 'checking', error: undefined })
   try {
-    const response = await net.fetch(`https://api.github.com/repos/${repo}/releases/latest`, { headers: { Accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(12000), redirect: 'error' })
-    if (!response.ok) throw new Error('无法读取 GitHub 正式版本，请检查网络和仓库访问权限。')
-    const release: unknown = await response.json()
-    if (!release || typeof release !== 'object' || !('tag_name' in release) || typeof release.tag_name !== 'string' || !/^v\d+\.\d+\.\d+$/.test(release.tag_name) || !('draft' in release) || release.draft !== false || !('prerelease' in release) || release.prerelease !== false) throw new Error('版本信息无效，请稍后重试。')
-    const version = release.tag_name.slice(1)
+    const { version, notes } = await fetchLatestRelease((url, options) => net.fetch(url, options))
     if (!newer(version, state.currentVersion)) return change({ status: 'current', version: undefined, notes: undefined })
-    const notes = 'body' in release && typeof release.body === 'string' ? release.body.slice(0, 30000) : ''
     return change({ status: 'available', version, notes })
   } catch (error) {
-    return change({ status: 'error', errorStage: 'check', error: error instanceof Error && error.message.startsWith('无法读取') ? error.message : '检查更新失败，请检查网络后重试。' })
+    return change({ status: 'error', errorStage: 'check', error: error instanceof Error && (error.message.startsWith('无法读取') || error.message.startsWith('更新信息')) ? error.message : '检查更新失败，请检查网络后重试。' })
   }
 }
 async function download(): Promise<void> {
@@ -50,7 +45,7 @@ async function download(): Promise<void> {
   const version = state.version
   change({ status: 'downloading', progress: 0, error: undefined })
   try {
-    updater.setFeedURL({ provider: 'generic', url: `https://github.com/${repo}/releases/download/v${version}/` })
+    updater.setFeedURL({ provider: 'generic', url: `${updateOrigin}/versions/v${version}/` })
     const result = await updater.checkForUpdates()
     const info = result?.updateInfo
     if (!result?.isUpdateAvailable || info?.version !== version || info.files.length !== 1 || info.files[0].url !== `linggao-ai-${version}-win-x64.exe`) throw new Error('更新文件与版本不匹配。')
@@ -71,7 +66,9 @@ export function registerUpdates(): void {
   }))
   ipcMain.handle('updates:open-release', event => respond(event, async () => {
     if (state.platform !== 'mac' || !state.version || !/^\d+\.\d+\.\d+$/.test(state.version)) throw new Error('版本信息无效。')
-    await shell.openExternal(`https://github.com/${repo}/releases/tag/v${state.version}`)
+    const arch = process.arch === 'arm64' ? 'arm64' : process.arch === 'x64' ? 'x64' : null
+    if (!arch) throw new Error('不支持当前处理器。')
+    await shell.openExternal(`${updateOrigin}/versions/v${state.version}/linggao-ai-${state.version}-mac-${arch}.dmg`)
   }))
   if (app.isPackaged) setTimeout(() => { void check() }, 2000)
 }

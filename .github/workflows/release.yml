@@ -161,3 +161,41 @@ jobs:
           gh release download "$TAG" --dir "$VERIFY_DIR" --pattern latest.yml --pattern "linggao-ai-$VERSION-win-x64.exe"
           node scripts/verify-update.cjs "$VERIFY_DIR" "$VERSION"
           gh release edit "$TAG" --draft=false --verify-tag
+
+  publish-update-server:
+    needs: [prepare, release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Publish update files
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          UPDATE_SSH_KEY: ${{ secrets.LINGGAO_UPDATE_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          VERSION=${TAG#v}
+          STAGE=$(mktemp -d)
+          SSH_DIR=$(mktemp -d)
+          trap 'rm -rf "$STAGE" "$SSH_DIR"' EXIT
+          printf '%s\n' "$UPDATE_SSH_KEY" > "$SSH_DIR/key"
+          chmod 600 "$SSH_DIR/key"
+          printf '%s\n' '39.106.162.75 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIH0QWGVHkUol547yBo1BOQmfWKINjG3yLWxXWy7OXRY1' > "$SSH_DIR/known_hosts"
+          gh release download "$TAG" --dir "$STAGE" --pattern latest.yml --pattern "linggao-ai-$VERSION-win-x64.exe" --pattern "linggao-ai-$VERSION-mac-arm64.dmg" --pattern "linggao-ai-$VERSION-mac-x64.dmg"
+          node scripts/verify-update.cjs "$STAGE" "$VERSION"
+          RELEASE_NOTES=$(gh release view "$TAG" --json body --jq .body)
+          export VERSION RELEASE_NOTES STAGE
+          node -e 'require("node:fs").writeFileSync(process.env.STAGE + "/latest.json", JSON.stringify({version: process.env.VERSION, notes: process.env.RELEASE_NOTES}))'
+          tar -C "$STAGE" -cf - latest.json latest.yml "linggao-ai-$VERSION-win-x64.exe" "linggao-ai-$VERSION-mac-arm64.dmg" "linggao-ai-$VERSION-mac-x64.dmg" | ssh -T -i "$SSH_DIR/key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$SSH_DIR/known_hosts" linggao-update@39.106.162.75

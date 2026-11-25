@@ -1167,3 +1167,11 @@ test('平台链接校验内置平台、自定义名称和安全的网页地址',
   assert.equal(validPlatformLinks([...builtins, { name: '知乎', url: 'https://user:pass@example.com/' }]), false)
   assert.equal(validPlatformLinks(builtins.slice(1)), false)
 })
+
+test('更新检查读取并校验更新服务器的版本信息', async () => {
+  const { fetchLatestRelease } = await import('../src/main/features/updates/release-source')
+  const result = await fetchLatestRelease(async () => new Response(JSON.stringify({ version: '0.0.6', notes: '更新说明' }), { status: 200 }))
+  assert.deepEqual(result, { version: '0.0.6', notes: '更新说明' })
+  await assert.rejects(fetchLatestRelease(async () => new Response(JSON.stringify({ version: '../bad', notes: '' }), { status: 200 })))
+  await assert.rejects(fetchLatestRelease(async () => new Response('', { status: 503 })))
+})
