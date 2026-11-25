@@ -19,6 +19,7 @@ import { Detail } from './features/Detail'
 import type { PlatformLink } from '../../shared/platform-links'
 import { PlatformSettings } from './features/PlatformSettings'
 import { Settings } from './features/Settings'
+import { useSoftwareUpdates, UpdateDialog, UpdateSettings } from './features/SoftwareUpdates'
 import { prepareArticleOpen } from './features/reopen-article'
 import { FolderContents } from './features/FolderContents'
 import type { WorkspaceIndex } from '../../shared/workspace'
@@ -32,6 +33,7 @@ export default function App() {
   useAppearance()
   const { confirm, confirmation } = useConfirmDialog()
   const showMessage = useMessage()
+  const updates = useSoftwareUpdates()
   const [createForm, setCreateForm] = useState<CreateForm>({ title: '', angle: '', audience: '', platforms: [...platforms], imageStyle: defaultImageStyle, generateImages: false })
   const [availablePlatforms, setAvailablePlatforms] = useState<Platform[]>([...platforms])
   function applyPlatformLinks(links: PlatformLink[]) { setAvailablePlatforms(platforms.filter(platform => links.some(link => link.name === platform && link.enabled !== false))) }
@@ -400,7 +402,7 @@ export default function App() {
         <Button variant="outline" type="button" className="article-secondary-button" disabled={busy} onClick={() => navigate('topics')}>去选题工作台</Button></div>
       </section></Card>)}
     <div hidden={page !== 'platforms'}><PlatformSettings onSaved={applyPlatformLinks} /></div>
-    {page === 'settings' && <Settings key={workspaceVersion} workspaceLocked={topicStatus === '选题生成中' || articleRuns.some(run => run.status === 'queued' || run.status === 'running')} onSaved={(directoryChanged) => { if (directoryChanged) { setFolderId(null); workspaceVersionRef.current += 1; setRegenerationVersions({}); updateDocuments(() => ({})); updatePlatformTitles(() => ({})); setArticleTitles({}); setArticleStyles({}); setTopicStatus(''); setCreateForm({ title: '', angle: '', audience: '', platforms: [...platforms], imageStyle: defaultImageStyle, generateImages: false }); setCreateDirty(false); setWorkspaceVersion((value) => value + 1) }; void refresh() }} />}
+    {page === 'settings' && <Settings softwareUpdates={<UpdateSettings updates={updates}/>} key={workspaceVersion} workspaceLocked={topicStatus === '选题生成中' || articleRuns.some(run => run.status === 'queued' || run.status === 'running')} onSaved={(directoryChanged) => { if (directoryChanged) { setFolderId(null); workspaceVersionRef.current += 1; setRegenerationVersions({}); updateDocuments(() => ({})); updatePlatformTitles(() => ({})); setArticleTitles({}); setArticleStyles({}); setTopicStatus(''); setCreateForm({ title: '', angle: '', audience: '', platforms: [...platforms], imageStyle: defaultImageStyle, generateImages: false }); setCreateDirty(false); setWorkspaceVersion((value) => value + 1) }; void refresh() }} />}
     </main></div>
     <Sheet open={drawerOpen} onOpenChange={open => { if (!operationBusy) setDrawerOpen(open) }}>
       <SheetContent className="create-drawer article-create-drawer max-w-none gap-0 sm:max-w-none" showCloseButton={false}
@@ -425,5 +427,6 @@ export default function App() {
       </SheetContent>
     </Sheet>
     {confirmation}
+    <UpdateDialog updates={updates}/>
   </div>
 }

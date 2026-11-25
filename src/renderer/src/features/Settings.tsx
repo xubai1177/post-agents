@@ -4,7 +4,7 @@ import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { defaultAccentColor, defaultPanelOpacity, type AppSettings, type KeyChange, type LegacySettings } from '../../../shared/settings'
 import { Icon } from '../components/Icon'
 import { defaultPlatformLinks } from '../../../shared/platform-links'
@@ -19,7 +19,7 @@ function readLegacySettings(): LegacySettings | undefined {
   } catch { /* Leave invalid legacy data untouched. */ }
   return undefined
 }
-export function Settings({ onSaved, workspaceLocked }: { onSaved: (directoryChanged: boolean) => void; workspaceLocked: boolean }) {
+export function Settings({ onSaved, workspaceLocked, softwareUpdates }: { onSaved: (directoryChanged: boolean) => void; workspaceLocked: boolean; softwareUpdates: ReactNode }) {
   const [settings, setSettings] = useState<AppSettings>(initialSettings)
   const [accentColor, setAccentColor] = useState<string>(defaultAccentColor)
   const [panelOpacity, setPanelOpacity] = useState(defaultPanelOpacity)
@@ -101,7 +101,7 @@ export function Settings({ onSaved, workspaceLocked }: { onSaved: (directoryChan
       setSettings(result.value); setAccentColor(result.value.accentColor); setPanelOpacity(result.value.panelOpacity); setApiUrl(result.value.apiUrl); setModel(result.value.model); setDirectory(result.value.draftsDirectory); setApiKey(''); setClearKey(false); setImageKey(''); setClearImageKey(false); setMessage('设置已保存在本机。'); window.dispatchEvent(new Event('appearance-saved')); onSaved(result.value.draftsDirectory !== settings.draftsDirectory)
     } catch { setError('保存失败，请检查本机权限后重试。') } finally { setSaving(false) }
   }
-  return <div className="page-wrap settings-page"><div className="page-title settings-title"><h1>设置</h1></div><div className="settings-layout"><nav className="settings-nav" aria-label="设置目录"><strong>设置目录</strong><Button variant="ghost" type="button" onClick={() => document.getElementById('workspace-settings')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>工作空间管理</Button><Button variant="ghost" type="button" onClick={() => document.getElementById('settings-appearance')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>外观</Button><Button variant="ghost" type="button" onClick={() => document.getElementById('settings-model')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>模型服务</Button><Button variant="ghost" type="button" onClick={() => document.getElementById('settings-image')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>图片生成服务</Button></nav><div><div id="workspace-settings">{workspaceLocked && <p role="status">生成任务进行期间，暂不能切换工作空间。</p>}<WorkspaceManager disabled={loading || saving || workspaceLocked} onChanged={() => onSaved(true)} /></div><form className="settings-form" onSubmit={save}>
+  return <div className="page-wrap settings-page"><div className="page-title settings-title"><h1>设置</h1></div><div className="settings-layout"><nav className="settings-nav" aria-label="设置目录"><strong>设置目录</strong><Button variant="ghost" type="button" onClick={() => document.getElementById('workspace-settings')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>工作空间管理</Button><Button variant="ghost" type="button" onClick={() => document.getElementById('settings-appearance')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>外观</Button><Button variant="ghost" type="button" onClick={() => document.getElementById('settings-model')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>模型服务</Button><Button variant="ghost" type="button" onClick={() => document.getElementById('settings-image')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>图片生成服务</Button><Button variant="ghost" type="button" onClick={() => document.getElementById('settings-update')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>软件更新</Button></nav><div><div id="workspace-settings">{workspaceLocked && <p role="status">生成任务进行期间，暂不能切换工作空间。</p>}<WorkspaceManager disabled={loading || saving || workspaceLocked} onChanged={() => onSaved(true)} /></div><form className="settings-form" onSubmit={save}>
     <fieldset disabled={loading || saving || fetchingModels} className="settings-fields"><Card asChild><section className="form-card" id="settings-appearance">
       <div className="form-heading"><div className="form-heading-icon"><Icon name="settings" size={20}/></div><div><h2>外观</h2><p>选择主题色与面板通透程度。</p></div></div>
       <div className="appearance-colors">
@@ -120,6 +120,6 @@ export function Settings({ onSaved, workspaceLocked }: { onSaved: (directoryChan
           : message ? <span className="settings-success" role="status">{message}</span>
           : <span>设置保存在此设备上</span>}
       </div>
-      <Button type="submit" className="primary-button" disabled={loading || saving || fetchingModels || Boolean(error && !window.settingsApi)}>{saving ? '处理中…' : '保存设置'}</Button></div></form></div></div></div>
+      <Button type="submit" className="primary-button" disabled={loading || saving || fetchingModels || Boolean(error && !window.settingsApi)}>{saving ? '处理中…' : '保存设置'}</Button></div></form><div className="mt-3">{softwareUpdates}</div></div></div></div>
 }
 

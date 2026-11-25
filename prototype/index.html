@@ -634,6 +634,13 @@ html[data-theme] .proto-drawer:has(#create-form:not(.batch-create-simple #create
     <p id="prototype-confirm-description"></p>
     <div class="prototype-confirm-actions"><button class="secondary" value="cancel" autofocus>取消</button><button class="primary" value="accept">继续</button></div>
   </form>
+</dialog>
+<dialog id="update-dialog" class="prototype-confirm" aria-labelledby="update-title" aria-describedby="update-description">
+  <h2 id="update-title">发现新版本 v0.0.5</h2>
+  <p id="update-description">当前版本 v0.0.4</p>
+  <div style="margin:16px 0;line-height:1.8;font-size:13px"><strong>更新内容</strong><ul><li>优化内容创作和工作区体验</li><li>修复若干问题</li></ul></div>
+  <div id="update-progress" hidden><span></span><progress max="100" value="0" aria-label="更新下载进度" style="display:block;width:100%;margin-top:8px;accent-color:var(--brand)"></progress></div>
+  <div class="prototype-confirm-actions"><button type="button" class="secondary" id="update-later">稍后</button><button type="button" class="primary" id="update-primary">下载更新</button></div>
 </dialog><div id="toast" role="status" aria-live="polite"></div>
 <script>
 (() => {
@@ -841,7 +848,34 @@ function applyTheme(){
   document.documentElement.style.setProperty('--panel-opacity',`${Number.isInteger(catalog.appearance.opacity)?catalog.appearance.opacity:88}%`);
 }
 
-function render(){history.replaceState(null,'',routeHash(page,selected,selected?platform:''));renderVersion++;applyTheme();layout(page==='topics'?topics():page==='create'?create():page==='settings'?settings():page==='platforms'?platformPage():prototypeFolderId?prototypeFolderContents():detail())}
+function render(){history.replaceState(null,'',routeHash(page,selected,selected?platform:''));renderVersion++;applyTheme();layout(page==='topics'?topics():page==='create'?create():page==='settings'?settings():page==='platforms'?platformPage():prototypeFolderId?prototypeFolderContents():detail());if(page==='settings')renderUpdateSettings()}
+let updatePlatform='windows',updateState='available',updatePercent=0,updateTimer;
+const updateDialog=document.getElementById('update-dialog');
+function showUpdate(){
+  const progress=document.getElementById('update-progress'),primary=document.getElementById('update-primary');
+  progress.hidden=updateState!=='downloading';
+  progress.querySelector('span').textContent=`正在下载更新 ${updatePercent}%`;
+  progress.querySelector('progress').value=updatePercent;
+  primary.disabled=updateState==='downloading';
+  primary.textContent=updatePlatform==='mac'?'前往 GitHub 下载':updateState==='downloaded'?'重启更新':'下载更新';
+  if(!updateDialog.open)updateDialog.showModal();
+}
+document.getElementById('update-later').onclick=()=>updateDialog.close();
+document.getElementById('update-primary').onclick=()=>{
+  if(updatePlatform==='mac'){updateDialog.close();toast('示例交互：前往 GitHub 下载');return}
+  if(updateState==='downloaded'){updateDialog.close();toast('示例交互：重启并安装更新');return}
+  updateState='downloading';updatePercent=0;showUpdate();
+  updateTimer=setInterval(()=>{updatePercent=Math.min(100,updatePercent+10);if(updatePercent===100){clearInterval(updateTimer);updateState='downloaded';if(!updateDialog.open)toast('更新已下载，可在设置中重启更新。')}if(updateDialog.open)showUpdate()},180);
+};
+function renderUpdateSettings(){
+  const nav=document.querySelector('.settings-nav'),main=document.querySelector('.settings-main');
+  if(!nav||!main)return;
+  nav.insertAdjacentHTML('beforeend','<a href="#settings-update">软件更新</a>');
+  main.insertAdjacentHTML('beforeend',`<section id="settings-update" class="settings-group"><h2>软件更新</h2><div class="settings-box"><div class="settings-row"><div class="settings-label"><strong>当前版本</strong><small>v0.0.4</small></div><button type="button" class="secondary" id="update-check">检查更新</button></div><div class="settings-row"><div class="settings-label"><strong>体验平台</strong></div><select id="update-platform" aria-label="体验更新平台"><option value="windows" ${updatePlatform==='windows'?'selected':''}>Windows</option><option value="mac" ${updatePlatform==='mac'?'selected':''}>Mac</option></select></div></div></section>`);
+  document.getElementById('update-check').onclick=()=>{if(updateState==='downloaded'||updateState==='downloading'){showUpdate();return}const button=document.getElementById('update-check');button.disabled=true;button.textContent='正在检查…';setTimeout(()=>{button.disabled=false;button.textContent='检查更新';showUpdate()},600)};
+  document.getElementById('update-platform').onchange=event=>{updatePlatform=event.target.value;clearInterval(updateTimer);updateState='available';updatePercent=0};
+}
+setTimeout(()=>{if(!updateDialog.open)showUpdate()},1800);
 function collect(form,base){for(const [k,v] of new FormData(form))if(k in base&&typeof v==='string')base[k]=v}
 function finishCreateDrawer(){if(batchCreateItems){state.create=batchCreatePrevious;batchCreateItems=null;batchCreatePrevious=null}else{const form=document.getElementById('create-form');if(form)collect(form,state.create)}createDrawerOpen=false;persist();render()}
 function closeTopicDrawer(){const form=document.getElementById('topic-form');if(form)collect(form,state.topicForm);topicDrawerOpen=false;persist();render();document.querySelector('[data-action="open-topic-drawer"]')?.focus()}

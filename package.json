@@ -1,6 +1,6 @@
 {
   "name": "post-agents-app",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "private": true,
   "description": "灵稿 AI 内容创作工作台",
   "main": "./out/main/index.js",
@@ -19,6 +19,7 @@
     "@langchain/openai": "^1.8.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "electron-updater": "6.8.11",
     "lucide-react": "^1.76.0",
     "radix-ui": "^1.8.1",
     "react": "^19.1.1",

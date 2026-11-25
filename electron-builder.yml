@@ -16,6 +16,10 @@ mac:
     - dmg
     - zip
 win:
+  publish:
+    provider: github
+    owner: xubai1177
+    repo: post-agents
   icon: src/renderer/public/icon.png
   target:
     - nsis

@@ -61,7 +61,11 @@ jobs:
               exit 1
             fi
           else
-            gh release create "$TAG" --draft --title "灵稿 AI $TAG" --generate-notes --verify-tag
+            if [[ -f "release-notes/$TAG.md" ]]; then
+              gh release create "$TAG" --draft --title "灵稿 AI $TAG" --notes-file "release-notes/$TAG.md" --verify-tag
+            else
+              gh release create "$TAG" --draft --title "灵稿 AI $TAG" --generate-notes --verify-tag
+            fi
           fi
 
   build:
@@ -108,7 +112,11 @@ jobs:
         run: |
           test "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = true
           shopt -s nullglob
-          assets=(dist/*.exe dist/*.dmg dist/*.zip)
+          assets=(dist/*.exe dist/*.dmg dist/*.zip dist/latest.yml)
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            test -s dist/latest.yml
+            node scripts/verify-update.cjs dist "${TAG#v}"
+          fi
           if (( ${#assets[@]} == 0 )); then
             echo "No installers were produced." >&2
             exit 1
@@ -121,6 +129,15 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
       - name: Publish release
         shell: bash
         env:
@@ -138,4 +155,8 @@ jobs:
               exit 1
             fi
           done
+          grep -Fxq latest.yml <<< "$ASSETS" || { echo "Missing latest.yml" >&2; exit 1; }
+          VERIFY_DIR=$(mktemp -d)
+          gh release download "$TAG" --dir "$VERIFY_DIR" --pattern latest.yml --pattern "linggao-ai-$VERSION-win-x64.exe"
+          node scripts/verify-update.cjs "$VERIFY_DIR" "$VERSION"
           gh release edit "$TAG" --draft=false --verify-tag

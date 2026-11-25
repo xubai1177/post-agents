@@ -4,6 +4,7 @@ import type { DraftsApi } from '../shared/drafts'
 import type { GenerationProgress } from '../shared/research'
 import type { TopicsApi } from '../shared/topics'
 import type { ImagesApi, ArticleImagesProgress } from '../shared/images'
+import type { UpdatesApi, UpdateState } from '../shared/updates'
 import type { WorkspaceApi } from '../shared/workspace'
 
 const settings: SettingsApi = {
@@ -83,3 +84,17 @@ const workspace: WorkspaceApi = {
   importBackup: (password, name) => ipcRenderer.invoke('workspace:import', password, name)
 }
 contextBridge.exposeInMainWorld('workspaceApi', workspace)
+
+const updates: UpdatesApi = {
+  state: () => ipcRenderer.invoke('updates:state'),
+  check: () => ipcRenderer.invoke('updates:check'),
+  download: () => ipcRenderer.invoke('updates:download'),
+  install: () => ipcRenderer.invoke('updates:install'),
+  openRelease: () => ipcRenderer.invoke('updates:open-release'),
+  onChanged: callback => {
+    const handler = (_event: Electron.IpcRendererEvent, value: UpdateState) => callback(value)
+    ipcRenderer.on('updates:changed', handler)
+    return () => ipcRenderer.removeListener('updates:changed', handler)
+  }
+}
+contextBridge.exposeInMainWorld('updatesApi', updates)

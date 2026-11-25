@@ -4,6 +4,7 @@ import { registerSettings } from './ipc/settings-ipc'
 import { registerDrafts } from './ipc/drafts-ipc'
 import { registerTopics } from './ipc/topics-ipc'
 import { registerImages } from './ipc/images-ipc'
+import { registerUpdates } from './features/updates/updates'
 import { registerWorkspace } from './ipc/workspace-ipc'
 import { loadEnvFile } from 'node:process'
 
@@ -51,6 +52,7 @@ app.whenReady().then(() => {
   registerImages()
   registerWorkspace()
   registerTopics()
+  registerUpdates()
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
