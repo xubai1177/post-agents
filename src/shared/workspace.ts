@@ -34,12 +34,19 @@ export type WorkspaceChange =
   | { type: 'create'; name: string; parentId: string | null }
   | { type: 'rename'; id: string; name: string }
   | { type: 'delete'; id: string }
+  | { type: 'moveNodes'; nodes: WorkspaceNodeId[]; folderId: string | null }
   | { type: 'moveDraft'; draftId: string; folderId: string | null }
   | { type: 'reorder'; parentId: string | null; node: WorkspaceNodeId; target: WorkspaceNodeId; position: 'before' | 'after' }
   | { type: 'setImageStyle'; draftId: string; style: ImageStyle }
   | { type: 'renameArticle'; draftId: string; title: string; expectedTitle: string }
 export interface DeleteArticleResult { index: WorkspaceIndex; warning?: string }
+export type WorkspaceMenuAction = 'open' | 'create' | 'import' | 'export' | 'settings'
+export interface BackupExportProgress { phase: 'preparing' | 'writing' | 'finishing'; files: number; bytes: number }
 export interface WorkspaceApi {
+  onExportProgress: (callback: (progress: BackupExportProgress) => void) => () => void
+  onMenuAction: (callback: (action: WorkspaceMenuAction) => void) => () => void
+  listWorkspaces: () => Promise<Result<{ current: string; recent: string[] }>>
+  switchWorkspace: (directory: string) => Promise<Result<AppSettings>>
   read: () => Promise<Result<WorkspaceIndex & { directory: string }>>
   change: (change: WorkspaceChange) => Promise<Result<WorkspaceIndex>>
   deleteArticle: (id: string) => Promise<Result<DeleteArticleResult>>

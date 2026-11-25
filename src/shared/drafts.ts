@@ -11,6 +11,8 @@ export interface CreateResult { draft: Draft | null; failures: { platform: Platf
 export interface OptimizeRequest { id: string; platform: Platform; version: string; content: string; instruction: string }
 export interface RegenerateRequest { id: string; platform: Platform; version: string; title: string; storedTitle: string | null }
 export interface GenerateTitlesRequest { id: string; platform: Platform; version: string; content: string }
+export type TestPlatformPromptRequest = { kind: 'body'; platform: Platform; topic: string; rule: string } | { kind: 'title'; platform: Platform; content: string; rule: string }
+export type TestPlatformPromptResult = { kind: 'body'; content: string } | { kind: 'title'; titles: string[] }
 export interface PromptSnapshot { platformPrompts: PlatformPrompts; titlePrompts: PlatformPrompts }
 export interface ArticleRun { imageProgress?: string; promptSnapshot?: PromptSnapshot; id: string; request: CreateRequest; versions: Partial<Record<Platform, string>>; status: 'queued' | 'running' | 'waiting' | 'failed' | 'interrupted' | 'done'; phase?: GenerationProgress | 'images'; message?: string; imageStyle: ImageStyle; generateImages: boolean }
 export interface StartArticleRequest { request: CreateRequest; imageStyle: ImageStyle; generateImages: boolean; folderId: string | null }
@@ -24,6 +26,7 @@ export interface DraftsApi {
   createBlank: (request: CreateRequest) => Promise<Result<CreateResult>>
   optimize: (request: OptimizeRequest) => Promise<Result<string>>
   regenerate: (request: RegenerateRequest) => Promise<Result<{ document: Document; warnings: string[] }>>
+  testPlatformPrompt: (request: TestPlatformPromptRequest) => Promise<Result<TestPlatformPromptResult>>
   generateTitles: (request: GenerateTitlesRequest) => Promise<Result<string[]>>
   research: (id: string, platform?: Platform) => Promise<Result<ResearchRecord | null>>
   openSource: (id: string, url: string, platform?: Platform) => Promise<Result<void>>

@@ -1,10 +1,10 @@
 import {
-  ArrowLeft, ArrowRight, Check, ChevronRight, Clock, Download, ExternalLink, FileText, Folder, Image, LayoutGrid,
+  ArrowLeft, ArrowRight, Check, ChevronDown, ChevronRight, Clock, Download, ExternalLink, FileText, Folder, Image, LayoutGrid,
   Lightbulb, LoaderCircle, Pencil, Plus, RefreshCw, Search, Settings, Sparkles, Trash2, X,
 } from 'lucide-react'
 
 const icons = {
-  back: ArrowLeft, arrow: ArrowRight, check: Check, chevron: ChevronRight,
+  back: ArrowLeft, arrow: ArrowRight, check: Check, chevron: ChevronRight, down: ChevronDown,
   clock: Clock, close: X, download: Download, external: ExternalLink, file: FileText, folder: Folder, image: Image, grid: LayoutGrid,
   bulb: Lightbulb, loading: LoaderCircle, edit: Pencil, plus: Plus, refresh: RefreshCw, search: Search, settings: Settings, spark: Sparkles, trash: Trash2,
 }

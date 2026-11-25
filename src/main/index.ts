@@ -1,4 +1,5 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, Menu, type MenuItemConstructorOptions } from 'electron'
+import type { WorkspaceMenuAction } from '../shared/workspace'
 import { join } from 'node:path'
 import { registerSettings } from './ipc/settings-ipc'
 import { registerDrafts } from './ipc/drafts-ipc'
@@ -22,6 +23,8 @@ function createWindow(): void {
     show: false,
     backgroundColor: '#f8fafc',
     title: '灵稿 AI',
+    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' as const } : {}),
+    ...(process.platform === 'win32' ? { titleBarStyle: 'hidden' as const, titleBarOverlay: { height: 44 } } : {}),
     icon: join(app.getAppPath(), 'src/renderer/public/icon.png'),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -53,6 +56,26 @@ app.whenReady().then(() => {
   registerWorkspace()
   registerTopics()
   registerUpdates()
+  const workspaceAction = (action: WorkspaceMenuAction) => {
+    const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+    if (window && !window.isDestroyed()) window.webContents.send('workspace:menu-action', action)
+  }
+  const template: MenuItemConstructorOptions[] = [
+    ...(process.platform === 'darwin' ? [{ role: 'appMenu' as const }] : []),
+    { label: '文件', submenu: [
+      { label: '工作区', submenu: [
+        { label: '打开已有工作区…', click: () => workspaceAction('open') },
+        { label: '新建工作区…', click: () => workspaceAction('create') },
+        { type: 'separator' },
+        { label: '导入备份…', click: () => workspaceAction('import') },
+        { label: '导出备份…', click: () => workspaceAction('export') }
+      ] },
+      { type: 'separator' },
+      { label: '设置…', click: () => workspaceAction('settings') }
+    ] },
+    { role: 'editMenu' }, { role: 'viewMenu' }, { role: 'windowMenu' }
+  ]
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

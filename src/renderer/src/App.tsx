@@ -1,9 +1,10 @@
 import logoUrl from './assets/icon.png'
 import { useConfirmDialog } from './components/ConfirmDialog'
 import { useMessage } from './components/MessageProvider'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { Alert } from '@/components/ui/alert'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { useEffect, useRef, useState } from 'react'
@@ -24,6 +25,10 @@ import { prepareArticleOpen } from './features/reopen-article'
 import { FolderContents } from './features/FolderContents'
 import type { WorkspaceIndex } from '../../shared/workspace'
 import { WorkspaceTree } from './features/WorkspaceTree'
+import { WorkspaceManager } from './features/WorkspaceManager'
+import type { WorkspaceMenuAction } from '../../shared/workspace'
+import { TaskPanel } from './features/TaskPanel'
+import { visibleArticles } from './features/visible-articles'
 import type { OpenDocument } from './features/types'
 
 import { formatRoute, parseRoute, type Page } from './features/routes'
@@ -52,6 +57,7 @@ export default function App() {
   const [page, setPage] = useState<Page>(() => parseRoute(window.location.hash).page)
   const [drafts, setDrafts] = useState<Draft[]>([])
   const [articleRuns, setArticleRuns] = useState<ArticleRun[]>([])
+  const [runsLoaded, setRunsLoaded] = useState(false)
   const runsRef = useRef<ArticleRun[]>([])
   const articleRefreshId = useRef(0)
   const [selectedId, setSelectedId] = useState(() => parseRoute(window.location.hash).draftId)
@@ -74,8 +80,16 @@ export default function App() {
   const [regenerationVersions, setRegenerationVersions] = useState<Record<string, number>>({})
   const [status, setStatus] = useState('')
   const [loading, setLoading] = useState(true)
+  const [workspaces, setWorkspaces] = useState<{ current: string; recent: string[] }>({ current: '', recent: [] })
+  const switchingWorkspace = useRef(false)
+  const [workspaceAction, setWorkspaceAction] = useState<Exclude<WorkspaceMenuAction, 'open' | 'settings'> | null>(null)
   const [workspaceVersion, setWorkspaceVersion] = useState(0)
   const workspaceVersionRef = useRef(0)
+  useEffect(() => {
+    let active = true
+    void window.workspaceApi.listWorkspaces().then(result => { if (active) { if (result.ok) setWorkspaces(result.value); else showMessage(result.error, true) } }).catch(() => { if (active) showMessage('无法读取工作区列表。', true) })
+    return () => { active = false }
+  }, [workspaceVersion])
   const [articleStyles, setArticleStyles] = useState<Record<string, ImageStyle>>({})
   const [articleTitles, setArticleTitles] = useState<Record<string, string>>({})
   const [researchFailed, setResearchFailed] = useState(false)
@@ -88,18 +102,21 @@ export default function App() {
   const docKey = `${selectedId}:${selectedPlatform}`
   const current = documents[docKey]
   async function refresh(preferredId?: string) {
+    const workspace = workspaceVersionRef.current
     if (!window.draftsApi) { setStatus('请在桌面应用中使用本地文章。'); setLoading(false); return }
     try {
-      const result = await window.draftsApi.list()
-      if (!result.ok) { setStatus(result.error); setDrafts([]); return }
+      const [result, runResult] = await Promise.all([window.draftsApi.list(), window.draftsApi.articleRuns()])
+      if (workspace !== workspaceVersionRef.current) return
+      if (!result.ok || !runResult.ok) { setStatus(!result.ok ? result.error : !runResult.ok ? runResult.error : '无法读取任务状态。'); return }
       setStatus(''); setDrafts(result.value)
-      const draft = result.value.find((item) => item.id === preferredId) ?? result.value.find((item) => item.id === selectedId) ?? result.value[0]
+      const visible = visibleArticles(result.value, runResult.value)
+      const draft = visible.find((item) => item.id === preferredId) ?? visible.find((item) => item.id === selectedId) ?? visible[0]
       const nextPlatform = draft && draft.id === selectedId && draft.platforms.includes(selectedPlatform) ? selectedPlatform : draft?.platforms[0]
       setSelectedId(draft?.id ?? '')
       if (nextPlatform) setSelectedPlatform(nextPlatform)
       const route = parseRoute(window.location.hash)
       window.history.replaceState(null, '', formatRoute({ page: route.page, draftId: draft?.id ?? '', platform: nextPlatform ?? null }))
-    } catch { setStatus('无法读取工作空间，请检查设置和目录权限。') } finally { setLoading(false) }
+    } catch { if (workspace === workspaceVersionRef.current) setStatus('无法读取工作区，请检查设置和目录权限。') } finally { if (workspace === workspaceVersionRef.current) setLoading(false) }
   }
   useEffect(() => { void refresh() }, [])
   function openCreate(folderId: string | null, fromTopic = false) {
@@ -116,6 +133,7 @@ export default function App() {
   useEffect(() => {
     let active = true
     let initialized = false
+    setRunsLoaded(false)
     async function refreshRuns() {
       const sequence = ++articleRefreshId.current
       try {
@@ -130,9 +148,11 @@ export default function App() {
         }
         const warnings = initialized ? result.value.filter(run => run.status === 'done' && run.message && runsRef.current.find(old => old.id === run.id)?.status !== 'done') : []
         if (warnings.length) showMessage(warnings.map(run => `${run.request.title}：${run.message}`).join('；'), true)
+        const completed = initialized && result.value.some(run => run.status === 'done' && runsRef.current.find(old => old.id === run.id)?.status !== 'done')
         initialized = true
-        runsRef.current = result.value; setArticleRuns(result.value)
-      } catch { if (active) setStatus('无法读取文章生成状态，请检查工作空间。') }
+        runsRef.current = result.value; setArticleRuns(result.value); setRunsLoaded(true)
+        if (completed) { const draftsResult = await window.draftsApi.list(); if (active && draftsResult.ok) setDrafts(draftsResult.value) }
+      } catch { if (active) setStatus('无法读取文章生成状态，请检查工作区。') }
     }
     const unsubscribe = window.draftsApi.onArticlesChanged(() => { void refreshRuns() })
     void refreshRuns()
@@ -164,8 +184,8 @@ export default function App() {
         }
         return next
       })
-      if (failed) setStatus('部分文章标题无法读取，请检查工作空间。')
-    }).catch(() => { if (active) setStatus('无法读取文章标题，请检查工作空间。') })
+      if (failed) setStatus('部分文章标题无法读取，请检查工作区。')
+    }).catch(() => { if (active) setStatus('无法读取文章标题，请检查工作区。') })
     return () => { active = false }
   }, [drafts, articleRuns, articleTitles, workspaceVersion])
   useEffect(() => {
@@ -193,7 +213,7 @@ export default function App() {
       setFolderId(null); setSelectedId(draft.id); setSelectedPlatform(nextPlatform); setEditorVersion((value) => value + 1)
       if (!fromHistory) navigate('detail', draft.id, nextPlatform)
       return true
-    } catch (error) { setStatus(error instanceof Error ? error.message : '无法保存或重新读取文章，请检查工作空间后重试。'); return false }
+    } catch (error) { setStatus(error instanceof Error ? error.message : '无法保存或重新读取文章，请检查工作区后重试。'); return false }
     finally { openingArticle.current = false; setOperationBusy(false) }
   }
   async function deleteArticle(draft: Draft): Promise<boolean> {
@@ -206,20 +226,50 @@ export default function App() {
       const remaining = drafts.filter((item) => item.id !== draft.id)
       updateDocuments((all) => { const next = { ...all }; for (const platform of platforms) delete next[`${draft.id}:${platform}`]; return next }); updatePlatformTitles(all => { const next = { ...all }; for (const platform of platforms) delete next[`${draft.id}:${platform}`]; return next })
       setDrafts(remaining); setArticleTitles(result.value.index.titles); setArticleStyles(result.value.index.imageStyles); setTreeVersion((value) => value + 1)
-      if (selectedId === draft.id) { const next = remaining[0]; setSelectedId(next?.id ?? ''); if (next) setSelectedPlatform(next.platforms[0]); replaceRoute(page, next?.id ?? '', next?.platforms[0] ?? null); setEditorVersion((value) => value + 1) }
+      if (selectedId === draft.id) { const next = visibleArticles(remaining, articleRuns)[0]; setSelectedId(next?.id ?? ''); if (next) setSelectedPlatform(next.platforms[0]); replaceRoute(page, next?.id ?? '', next?.platforms[0] ?? null); setEditorVersion((value) => value + 1) }
       setStatus(result.value.warning ?? '文章及本地资源已删除。')
       return true
-    } catch { setStatus('删除文章失败，请检查工作空间。'); return false } finally { setOperationBusy(false) }
+    } catch { setStatus('删除文章失败，请检查工作区。'); return false } finally { setOperationBusy(false) }
+  }
+  async function deleteArticlesBatch(items: Draft[]): Promise<string[]> {
+    if (busy || openingArticle.current) return []
+    setOperationBusy(true); setStatus('')
+    const deleted: string[] = []
+    const errors: string[] = []
+    let latestIndex: import('../../shared/workspace').WorkspaceIndex | null = null
+    try {
+      for (const draft of items) {
+        if (platforms.some(platform => regeneratingRef.current.has(`${workspaceVersionRef.current}:${draft.id}:${platform}`))) { errors.push(`${draft.title}：正在重新生成`); continue }
+        try {
+          const result = await window.workspaceApi.deleteArticle(draft.id)
+          if (!result.ok) { errors.push(`${draft.title}：${result.error}`); continue }
+          deleted.push(draft.id); latestIndex = result.value.index
+          if (result.value.warning) errors.push(result.value.warning)
+        } catch { errors.push(`${draft.title}：删除失败`) }
+      }
+      const deletedSet = new Set(deleted)
+      const remaining = drafts.filter(item => !deletedSet.has(item.id))
+      updateDocuments(all => Object.fromEntries(Object.entries(all).filter(([key]) => !items.some(item => deletedSet.has(item.id) && platforms.some(platform => key === `${item.id}:${platform}`)))))
+      updatePlatformTitles(all => Object.fromEntries(Object.entries(all).filter(([key]) => !items.some(item => deletedSet.has(item.id) && platforms.some(platform => key === `${item.id}:${platform}`)))))
+      if (deleted.length) {
+        setDrafts(remaining); if (latestIndex) { setArticleTitles(latestIndex.titles); setArticleStyles(latestIndex.imageStyles) }; setTreeVersion(value => value + 1)
+        if (deletedSet.has(selectedId)) { const next = visibleArticles(remaining, articleRuns)[0]; setSelectedId(next?.id ?? ''); if (next) setSelectedPlatform(next.platforms[0]); replaceRoute(page, next?.id ?? '', next?.platforms[0] ?? null); setEditorVersion(value => value + 1) }
+      }
+      if (errors.length) showMessage(`已删除 ${deleted.length} 篇。${errors.join('；')}`, true)
+      else if (deleted.length) showMessage(`已删除 ${deleted.length} 篇文章。`)
+      return deleted
+    } finally { setOperationBusy(false) }
   }
   async function createDraft(request: CreateRequest, blank = false): Promise<CreateResult | null> {
     setOperationBusy(true); setStatus(''); setResearchFailed(false); setProgress(null); setImageProgress('')
     try {
       if (!blank) {
+        if (page === 'detail' && !(await discardCurrentDocument())) return null
         const queued = await window.draftsApi.startArticle({ request, imageStyle: createForm.imageStyle, generateImages: createForm.generateImages, folderId: articleFolderId })
         if (!queued.ok) { setStatus(queued.error); return null }
-        await refresh(queued.value.draft.id)
+        await refresh()
         setCreateDirty(false); setCreateForm({ title: '', angle: '', audience: '', platforms: [...platforms], imageStyle: defaultImageStyle, generateImages: false }); setArticleFolderId(null); setTreeVersion(value => value + 1)
-        setSelectedId(queued.value.draft.id); setSelectedPlatform(queued.value.draft.platforms[0]); navigate('detail', queued.value.draft.id, queued.value.draft.platforms[0]); setDrawerOpen(false); setStatus(queued.value.warning || '')
+        setDrawerOpen(false); navigate('tasks'); if (queued.value.warning) showMessage(queued.value.warning, true); else showMessage('文章任务已加入队列。')
         return { draft: queued.value.draft, failures: [] }
       }
       const result = blank ? await window.draftsApi.createBlank(request) : await window.draftsApi.generate(request)
@@ -253,7 +303,7 @@ export default function App() {
   }
   async function retryArticle(id: string, skipResearch: boolean) {
     try { const result = await window.draftsApi.retryArticle(id, skipResearch); if (!result.ok) setStatus(result.error) }
-    catch { setStatus('无法重试文章生成，请检查工作空间。') }
+    catch { setStatus('无法重试文章生成，请检查工作区。') }
   }
   async function saveImageStyle(id: string, style: ImageStyle): Promise<string | null> {
     try { const result = await window.workspaceApi.change({ type: 'setImageStyle', draftId: id, style }); if (!result.ok) return result.error; setArticleStyles(result.value.imageStyles); return null }
@@ -315,6 +365,7 @@ export default function App() {
     } catch { if (workspaceVersionRef.current === workspace) showMessage('重新生成失败，请检查模型服务和网络连接。', true) }
     finally { regeneratingRef.current.delete(jobKey); setRegeneratingKeys(new Set(regeneratingRef.current)) }
   }
+  const visibleDrafts = runsLoaded ? visibleArticles(drafts, articleRuns) : []
   const busy = operationBusy || batchBusy
   const selectedRun = articleRuns.find(run => run.id === selectedId)
   const generatingArticle = selectedRun?.status === 'queued' || selectedRun?.status === 'running'
@@ -350,7 +401,7 @@ export default function App() {
       if (busy || openingArticle.current) {
         restore(); return
       }
-      const draft = drafts.find((item) => item.id === route.draftId) ?? drafts.find((item) => item.id === selectedId) ?? drafts[0]
+      const draft = visibleDrafts.find((item) => item.id === route.draftId) ?? visibleDrafts.find((item) => item.id === selectedId) ?? visibleDrafts[0]
       const nextPlatform = draft && route.platform && draft.platforms.includes(route.platform) ? route.platform : draft?.platforms[0]
       if (page === 'detail' && (route.page !== 'detail' || (draft?.id === selectedId && nextPlatform !== selectedPlatform)) && !(await discardCurrentDocument())) { restore(); return }
       if (draft && draft.id !== selectedId && !(await openDraft(draft, nextPlatform, true))) { restore(); return }
@@ -362,7 +413,42 @@ export default function App() {
     }
     window.addEventListener('popstate', onPopState)
     return () => window.removeEventListener('popstate', onPopState)
-  }, [page, busy, dirty, topicStatus, drafts, selectedId, selectedPlatform])
+  }, [page, busy, dirty, topicStatus, drafts, articleRuns, runsLoaded, selectedId, selectedPlatform])
+  function workspaceChanged() {
+    setFolderId(null); workspaceVersionRef.current += 1; runsRef.current = []; setArticleRuns([]); setDrafts([]); setRunsLoaded(false); setRegenerationVersions({}); updateDocuments(() => ({})); updatePlatformTitles(() => ({})); setArticleTitles({}); setArticleStyles({}); setTopicStatus(''); setCreateForm({ title: '', angle: '', audience: '', platforms: [...platforms], imageStyle: defaultImageStyle, generateImages: false }); setCreateDirty(false); setDrawerOpen(false); setWorkspaceVersion(value => value + 1)
+    setSelectedId(''); navigate('detail', '', null); void refresh()
+  }
+  async function beforeWorkspaceSwitch() {
+    if (busy || topicStatus === '选题生成中' || articleRuns.some(run => run.status === 'queued' || run.status === 'running') || regeneratingRef.current.size) { showMessage('任务进行中，请完成后再切换工作区。', true); return false }
+    if (page === 'detail' && !(await discardCurrentDocument())) return false
+    if (page !== 'settings' && !createDirty) return true
+    return confirm({ title: '切换工作区？', message: '未保存的设置和创作表单会丢弃。', action: '继续切换' })
+  }
+  async function switchRecentWorkspace(directory: string) {
+    if (directory === workspaces.current || switchingWorkspace.current) return
+    switchingWorkspace.current = true
+    try {
+      if (!await beforeWorkspaceSwitch()) return
+      const result = await window.workspaceApi.switchWorkspace(directory)
+      if (!result.ok) showMessage(result.error, true)
+      else workspaceChanged()
+    } catch { showMessage('无法切换工作区，请重试。', true) } finally { switchingWorkspace.current = false }
+  }
+  const workspaceName = (directory: string) => directory.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || directory
+  const workspaceMenuHandler = useRef<(action: WorkspaceMenuAction) => void>(() => {})
+  workspaceMenuHandler.current = action => {
+    if (action === 'settings') { if (!busy) void openSettings(); return }
+    if (action !== 'open') { setWorkspaceAction(action); return }
+    void (async () => {
+      if (!await beforeWorkspaceSwitch()) return
+      try {
+        const result = await window.workspaceApi.open()
+        if (!result.ok) showMessage(result.error, true)
+        else if (result.value) workspaceChanged()
+      } catch { showMessage('无法打开工作区，请重试。', true) }
+    })()
+  }
+  useEffect(() => window.workspaceApi.onMenuAction(action => workspaceMenuHandler.current(action)), [])
   async function openSettings() {
     if (page === 'detail' && !(await discardCurrentDocument())) return
     setStatus(''); navigate('settings')
@@ -377,7 +463,19 @@ export default function App() {
     setCreateForm({ title: candidate.title, angle: candidate.angle, audience: batch.request.audience, platforms: [...batch.request.platforms], imageStyle: defaultImageStyle, generateImages: false, reference: { skipped: batch.skipped, sources: batch.sources } })
     setCreateDirty(false); openCreate(null, true)
   }
-  return <div className="app-shell notes-shell"><nav className="workspace-rail" aria-label="工作区导航"><div className="rail-brand" aria-label="灵稿 AI"><img src={logoUrl} alt=""/><span aria-hidden="true">灵稿 AI</span></div><Button variant="ghost" type="button" title="内容工作区" aria-label="内容工作区" aria-current={page === 'detail' ? 'page' : undefined} disabled={busy} onClick={() => { setFolderId(null); navigate('detail') }}><Icon name="file" size={19}/><span>文章</span></Button><Button variant="ghost" type="button" title="选题工作台" aria-label="选题工作台" aria-current={page === 'topics' ? 'page' : undefined} disabled={busy} onClick={async () => { if (page !== 'detail' || await discardCurrentDocument()) navigate('topics') }}><Icon name="bulb" size={19}/><span>选题</span></Button><Button variant="ghost" type="button" title="平台配置" aria-label="平台配置" aria-current={page === 'platforms' ? 'page' : undefined} disabled={busy} onClick={async () => { if (page !== 'detail' || await discardCurrentDocument()) navigate('platforms') }}><Icon name="grid" size={19}/><span>平台</span></Button><Button variant="ghost" type="button" className="rail-settings" title="设置" aria-label="设置" aria-current={page === 'settings' ? 'page' : undefined} disabled={busy} onClick={openSettings}><Icon name="settings" size={19}/><span>设置</span></Button></nav><aside className="notes-sidebar" hidden={page !== 'detail'}><div className="notes-list-header"><h2>内容工作区</h2><div className="new-content-menu" ref={newMenuRef}>
+  return <div className="app-shell notes-shell"><header className="window-toolbar"><div className="window-toolbar-brand"><img src={logoUrl} alt=""/><strong>灵稿 AI</strong></div><DropdownMenu>
+      <DropdownMenuTrigger asChild><Button variant="ghost" type="button" className="workspace-switcher" aria-label={workspaces.current ? `切换工作区，当前：${workspaceName(workspaces.current)}` : '选择工作区'} title={workspaces.current || undefined}>
+        <span className="workspace-switcher-name">{workspaces.current ? workspaceName(workspaces.current) : '选择工作区'}</span><Icon name="down" size={14} className="workspace-switcher-chevron"/>
+      </Button></DropdownMenuTrigger>
+      <DropdownMenuContent align="start" sideOffset={6} className="workspace-switcher-menu">
+        {workspaces.recent.length > 0 && <DropdownMenuLabel className="workspace-switcher-label">工作区</DropdownMenuLabel>}
+        {workspaces.recent.map(directory => <DropdownMenuItem key={directory} onSelect={() => void switchRecentWorkspace(directory)} aria-current={directory === workspaces.current ? 'true' : undefined} title={directory} className="workspace-switcher-item">
+          <Icon name="folder" size={16} className="workspace-switcher-item-icon"/><span className="workspace-switcher-item-text"><strong>{workspaceName(directory)}</strong><small>{directory}</small></span>{directory === workspaces.current && <Icon name="check" size={16} className="workspace-switcher-check"/>}
+        </DropdownMenuItem>)}
+        {workspaces.recent.length > 0 && <DropdownMenuSeparator/>}
+        <DropdownMenuItem className="workspace-switcher-open" onSelect={() => workspaceMenuHandler.current('open')}><Icon name="plus" size={16}/>打开其他工作区…</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu><div className="window-toolbar-actions"><TooltipProvider><Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon-sm" type="button" aria-label="任务面板" aria-current={page === 'tasks' ? 'page' : undefined} disabled={busy} onClick={async () => { if (page !== 'detail' || await discardCurrentDocument()) navigate('tasks') }}><Icon name="clock" size={18}/></Button></TooltipTrigger><TooltipContent>任务面板</TooltipContent></Tooltip><Tooltip><TooltipTrigger asChild><span className="window-toolbar-tooltip"><Button variant="ghost" size="icon-sm" type="button" aria-label="设置" aria-current={page === 'settings' ? 'page' : undefined} disabled={busy} onClick={openSettings}><Icon name="settings" size={18}/></Button></span></TooltipTrigger><TooltipContent>设置</TooltipContent></Tooltip></TooltipProvider></div></header><nav className="workspace-rail" aria-label="工作区导航"><div className="rail-brand" aria-label="灵稿 AI"><img src={logoUrl} alt=""/><span aria-hidden="true">灵稿 AI</span></div><Button variant="ghost" type="button" title="内容工作区" aria-label="内容工作区" aria-current={page === 'detail' ? 'page' : undefined} disabled={busy} onClick={() => { setFolderId(null); navigate('detail') }}><Icon name="file" size={19}/><span>文章</span></Button><Button variant="ghost" type="button" title="选题工作台" aria-label="选题工作台" aria-current={page === 'topics' ? 'page' : undefined} disabled={busy} onClick={async () => { if (page !== 'detail' || await discardCurrentDocument()) navigate('topics') }}><Icon name="bulb" size={19}/><span>选题</span></Button><Button variant="ghost" type="button" title="平台配置" aria-label="平台配置" aria-current={page === 'platforms' ? 'page' : undefined} disabled={busy} onClick={async () => { if (page !== 'detail' || await discardCurrentDocument()) navigate('platforms') }}><Icon name="grid" size={19}/><span>平台</span></Button></nav><aside className="notes-sidebar" hidden={page !== 'detail'}><div className="notes-list-header"><h2>内容工作区</h2><div className="new-content-menu" ref={newMenuRef}>
       <DropdownMenu modal={false}>
         <DropdownMenuTrigger asChild>
           <Button variant="ghost" size="icon-sm" aria-label="新建" title="新建" disabled={busy}><Icon name="plus" /></Button>
@@ -387,22 +485,23 @@ export default function App() {
           <DropdownMenuItem onSelect={() => openCreate(null)}>新建文章</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-    </div></div><section className="notes-list" aria-label="内容目录"><WorkspaceTree key={workspaceVersion} selectedFolderId={page === 'detail' ? folderId : null} onIndexChange={setFolderIndex} onOpenFolder={id => { void (async () => { if (await discardCurrentDocument()) setFolderId(id) })() }} createRequest={newFolderRequest} drafts={drafts} articleRuns={articleRuns} selectedId={page === 'detail' && !folderId ? selectedId : ''} selectedPlatform={selectedPlatform} platformTitles={platformTitles} enabled={!busy} refreshKey={treeVersion} onOpen={(draft, platform) => { void openDraft(draft, platform) }} onCreateArticle={openCreate} onDeleteArticle={deleteArticle} /></section><div className="notes-sidebar-bottom"><div className="notes-demo"><span className="status-dot"/> 本地工作区</div></div></aside>
+    </div></div><section className="notes-list" aria-label="内容目录"><WorkspaceTree key={workspaceVersion} selectedFolderId={page === 'detail' ? folderId : null} onIndexChange={setFolderIndex} onOpenFolder={id => { void (async () => { if (await discardCurrentDocument()) setFolderId(id) })() }} createRequest={newFolderRequest} drafts={visibleDrafts} articleRuns={articleRuns} selectedId={page === 'detail' && !folderId ? selectedId : ''} selectedPlatform={selectedPlatform} platformTitles={platformTitles} enabled={!busy} refreshKey={treeVersion} onOpen={(draft, platform) => { void openDraft(draft, platform) }} onCreateArticle={openCreate} onDeleteArticle={deleteArticle} onDeleteArticles={deleteArticlesBatch} /></section><div className="notes-sidebar-bottom"><div className="notes-demo"><span className="status-dot"/> 本地工作区</div></div></aside>
     <div className="notes-main"><main className={`notes-content ${page === 'detail' ? 'notes-content-detail' : page === 'topics' ? 'notes-content-topics' : ''}`}>
     {status && <Alert className="app-status block" role="status">{status}{page === 'detail' && (status.includes('自动保存失败') || status === '平台标题不能为空。') && <Button variant="link" size="xs" type="button" onClick={() => void (async () => { if (await discardCurrentDocument()) setStatus('') })()}>重试保存</Button>}</Alert>}
-    <div hidden={page !== 'topics'}><Topics availablePlatforms={availablePlatforms} key={workspaceVersion} active={page === 'topics'} onChoose={chooseTopic} onStatus={setTopicStatus} onOpen={(draft) => { void openDraft(draft) }} onBatchBusy={(value) => { setBatchBusy(value); if (!value) void refresh() }} drafts={drafts} /></div>
+    <div hidden={page !== 'topics'}><Topics availablePlatforms={availablePlatforms} key={workspaceVersion} active={page === 'topics'} onChoose={chooseTopic} onStatus={setTopicStatus} onBatchBusy={(value) => { setBatchBusy(value); if (!value) void refresh() }} /></div>
     {page === 'detail' && !folderId && selectedRun && selectedRun.status !== 'done' && <Alert className="app-status block" role="status">{selectedRun.status === 'queued' ? '文章正在排队等待生成。' : selectedRun.status === 'running' ? (selectedRun.phase === 'images' && selectedRun.imageProgress ? selectedRun.imageProgress : `文章生成中：${({ research: '检索资料', plan: '规划内容', write: '撰写文案', review: '检查内容', save: '保存文章', images: '生成配图' } as const)[selectedRun.phase ?? 'research']}…`) : (selectedRun.message || '文章生成未完成。')}{['failed', 'waiting', 'interrupted'].includes(selectedRun.status) && <Button variant="link" size="xs" type="button" className="reload-button" onClick={() => void retryArticle(selectedRun.id, false)}>重试</Button>}{selectedRun.status === 'waiting' && <Button variant="link" size="xs" type="button" className="reload-button" onClick={() => void retryArticle(selectedRun.id, true)}>跳过联网继续</Button>}</Alert>}
-    {page === 'detail' && folderId && <FolderContents folderId={folderId} index={folderIndex} drafts={drafts} onOpenFolder={setFolderId} onOpenArticle={(draft, platform) => void openDraft(draft, platform)}/>}
+    {page === 'detail' && folderId && <FolderContents folderId={folderId} index={folderIndex} drafts={visibleDrafts} onOpenFolder={setFolderId} onOpenArticle={(draft, platform) => void openDraft(draft, platform)}/>}
     {page === 'detail' && !folderId && (loading ? <div className="empty-state" role="status">正在读取文章…</div> : selectedDraft && current ? <Detail key={`${editorVersion}:${docKey}:${regenerationVersions[docKey] ?? 0}`} platformTitle={platformTitles[docKey]?.value ?? null} onPlatformTitleChange={(value) => updatePlatformTitles(all => all[docKey] ? { ...all, [docKey]: { ...all[docKey], value } } : all)} draft={displayedDraft ?? selectedDraft} selectedPlatform={selectedPlatform} document={current} editorBusy={busy || generatingArticle || regeneratingHere} onImageBusy={setOperationBusy} imageStyle={articleStyles[selectedDraft.id] ?? defaultImageStyle} onStyleSave={(style) => saveImageStyle(selectedDraft.id, style)} onDocumentChange={(value) => updateDocuments((all) => ({ ...all, [docKey]: { ...all[docKey], content: value } }))} onRegenerate={() => void regenerateCurrent()} regenerating={regeneratingHere} /> : selectedDraft ? <div className="empty-state" role="status">正在读取文案…</div> :
-      <Card asChild><section className="workspace-empty">
-        <div className="workspace-empty-mark"><Icon name="edit" size={26}/></div>
-        <h2>{drafts.length ? '打开一篇文章' : '从第一篇文章开始'}</h2>
-        <p>{drafts.length ? '从左侧选择文章，继续编辑文案、配图和核查资料。' : '写一篇空白文章，或为不同平台生成文案。'}</p>
+      <section className="workspace-empty">
+        <div className="workspace-empty-mark"><Icon name="edit" size={24}/></div>
+        <h2>{visibleDrafts.length ? '打开一篇文章' : '从第一篇文章开始'}</h2>
+        <p>{visibleDrafts.length ? '从左侧选择文章，继续编辑文案、配图和核查资料。' : '写一篇空白文章，或为不同平台生成文案。'}</p>
         <div><Button type="button" className="primary-button" disabled={busy} onClick={() => openCreate(null)}>新建文章</Button>
         <Button variant="outline" type="button" className="article-secondary-button" disabled={busy} onClick={() => navigate('topics')}>去选题工作台</Button></div>
-      </section></Card>)}
+      </section>)}
+    {page === 'tasks' && <TaskPanel workspaceVersion={workspaceVersion} runs={articleRuns} drafts={drafts} onOpenArticle={draft => { void openDraft(draft) }}/>}
     <div hidden={page !== 'platforms'}><PlatformSettings onSaved={applyPlatformLinks} /></div>
-    {page === 'settings' && <Settings softwareUpdates={<UpdateSettings updates={updates}/>} key={workspaceVersion} workspaceLocked={topicStatus === '选题生成中' || articleRuns.some(run => run.status === 'queued' || run.status === 'running')} onSaved={(directoryChanged) => { if (directoryChanged) { setFolderId(null); workspaceVersionRef.current += 1; setRegenerationVersions({}); updateDocuments(() => ({})); updatePlatformTitles(() => ({})); setArticleTitles({}); setArticleStyles({}); setTopicStatus(''); setCreateForm({ title: '', angle: '', audience: '', platforms: [...platforms], imageStyle: defaultImageStyle, generateImages: false }); setCreateDirty(false); setWorkspaceVersion((value) => value + 1) }; void refresh() }} />}
+    {page === 'settings' && <Settings softwareUpdates={<UpdateSettings updates={updates}/>} key={workspaceVersion} onSaved={() => { void refresh() }} />}
     </main></div>
     <Sheet open={drawerOpen} onOpenChange={open => { if (!operationBusy) setDrawerOpen(open) }}>
       <SheetContent className="create-drawer article-create-drawer max-w-none gap-0 sm:max-w-none" showCloseButton={false}
@@ -426,7 +525,7 @@ export default function App() {
           busy={operationBusy} researchFailed={researchFailed} progress={progress} imageProgress={imageProgress}/>
       </SheetContent>
     </Sheet>
-    {confirmation}
+    {confirmation}<WorkspaceManager action={workspaceAction} onClose={() => setWorkspaceAction(null)} onChanged={workspaceChanged} beforeSwitch={beforeWorkspaceSwitch}/>
     <UpdateDialog updates={updates}/>
   </div>
 }

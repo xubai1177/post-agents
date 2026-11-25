@@ -1,3 +1,4 @@
+import { visibleArticles } from '../src/renderer/src/features/visible-articles'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
@@ -314,6 +315,28 @@ test('工作空间目录支持嵌套、分类和删除后保留草稿', () => wi
   assert.equal(index.assignments[id], undefined)
   assert.equal((await readDraft(root, id, '小红书')).content, '正文')
   assert.deepEqual((await readWorkspaceIndex(root)).folders, [])
+}))
+
+test('批量移动保持文件夹层级并拒绝循环和同名冲突', () => withRoot(async root => {
+  const { changeWorkspaceIndex, readWorkspaceIndex } = await import('../src/main/features/workspace/workspace-index')
+  const article = await createTopic(root, '批量文章')
+  await createPlatform(root, article, '小红书', '正文')
+  let index = await changeWorkspaceIndex(root, { type: 'create', name: '来源', parentId: null })
+  const source = index.folders[0].id
+  index = await changeWorkspaceIndex(root, { type: 'create', name: '子目录', parentId: source })
+  const child = index.folders[1].id
+  index = await changeWorkspaceIndex(root, { type: 'create', name: '目标', parentId: null })
+  const target = index.folders[2].id
+  await changeWorkspaceIndex(root, { type: 'moveDraft', draftId: article, folderId: child })
+  await assert.rejects(changeWorkspaceIndex(root, { type: 'moveNodes', nodes: [`folder:${source}`], folderId: child }), /自身或其子文件夹/)
+  index = await changeWorkspaceIndex(root, { type: 'moveNodes', nodes: [`folder:${source}`, `folder:${child}`, `article:${article}`], folderId: target })
+  assert.equal(index.folders.find(f => f.id === source)?.parentId, target)
+  assert.equal(index.folders.find(f => f.id === child)?.parentId, source)
+  assert.equal(index.assignments[article], child)
+  await changeWorkspaceIndex(root, { type: 'create', name: '来源', parentId: null })
+  const before = await readWorkspaceIndex(root)
+  await assert.rejects(changeWorkspaceIndex(root, { type: 'moveNodes', nodes: [`folder:${source}`, `article:${article}`], folderId: null }), /同名/)
+  assert.deepEqual(await readWorkspaceIndex(root), before)
 }))
 
 test('同级文件夹与文章可混排，顺序持久保存，跨级排序被拒绝', () => withRoot(async (root) => {
@@ -719,6 +742,7 @@ test('页面路由保留带特殊字符的文章与平台，并安全处理无�
   const route = { page: 'detail' as const, draftId: '文章 & #1 / 生活', platform: '公众号' as const }
   assert.deepEqual(parseRoute(formatRoute(route)), route)
   assert.deepEqual(parseRoute('#settings'), { page: 'settings', draftId: '', platform: null })
+  assert.deepEqual(parseRoute('#tasks'), { page: 'tasks', draftId: '', platform: null })
   assert.deepEqual(parseRoute('#unknown?draft=x&platform=不存在'), { page: 'detail', draftId: 'x', platform: null })
   assert.equal(formatRoute({ page: 'topics', draftId: '', platform: '小红书' }), '#topics')
 })
@@ -1175,3 +1199,100 @@ test('更新检查读取并校验更新服务器的版本信息', async () => {
   await assert.rejects(fetchLatestRelease(async () => new Response(JSON.stringify({ version: '../bad', notes: '' }), { status: 200 })))
   await assert.rejects(fetchLatestRelease(async () => new Response('', { status: 503 })))
 })
+
+
+test('文章目录只显示已完成任务及普通草稿，失败结果仍可保留', () => {
+  const drafts = ['blank', 'queued', 'running', 'waiting', 'failed', 'interrupted', 'done'].map(id => ({ id }))
+  const runs = [
+    { id: 'queued', status: 'queued' }, { id: 'running', status: 'running' },
+    { id: 'waiting', status: 'waiting' }, { id: 'failed', status: 'failed' },
+    { id: 'interrupted', status: 'interrupted' }, { id: 'done', status: 'done' }
+  ] as const
+  assert.deepEqual(visibleArticles(drafts, [...runs]).map(draft => draft.id), ['blank', 'done'])
+  assert.equal(drafts.length, 7)
+})
+
+
+test('工作区历史保留旧目录并将当前目录置顶且去重', async () => {
+  const { rememberWorkspace } = await import('../src/shared/recent-workspaces')
+  assert.deepEqual(rememberWorkspace(['/one', '/two'], '/three'), ['/three', '/one', '/two'])
+  assert.deepEqual(rememberWorkspace(['/one', '/two'], '/two'), ['/two', '/one'])
+  assert.deepEqual(rememberWorkspace(['/one'], ''), ['/one'])
+})
+
+
+test('无密码备份可恢复文件和规则，但不会写入模型密钥', () => withRoot(async root => {
+  const { createBackup, decodeBackup, restoreBackup } = await import('../src/main/features/workspace/backup')
+  const source = join(root, 'source'), target = join(root, 'target')
+  await mkdir(source); await mkdir(target); await writeFile(join(source, '文章.md'), '文章内容')
+  const settings = { apiUrl: 'https://example.com/v1', model: 'text', apiKey: 'text-secret', imageService: 'custom' as const, imageApiUrl: 'https://example.com/v1', imageModel: 'image', imageApiKey: 'image-secret', platformPrompts: { 公众号: '规则' } }
+  const bytes = await createBackup(source, settings, '')
+  assert.equal(bytes.includes(Buffer.from('text-secret')), false)
+  assert.equal(bytes.includes(Buffer.from('image-secret')), false)
+  const snapshot = await decodeBackup(bytes, '')
+  assert.equal(snapshot.settings.credentialsIncluded, false)
+  assert.equal(snapshot.settings.apiKey, '')
+  assert.equal(snapshot.settings.imageApiKey, '')
+  assert.equal(snapshot.settings.platformPrompts?.公众号, '规则')
+  const forged = Buffer.from(bytes.toString('utf8').replace('\"apiKey\":\"\"', '\"apiKey\":\"injected\"'))
+  await assert.rejects(decodeBackup(forged, ''), /密钥设置无效/)
+  await restoreBackup(snapshot, target)
+  assert.equal(await readFile(join(target, '文章.md'), 'utf8'), '文章内容')
+  await assert.rejects(createBackup(source, settings, 'short'), /密码/)
+  const encrypted = await createBackup(source, settings, 'test-password')
+  await assert.rejects(decodeBackup(encrypted, ''), /请输入备份密码/)
+  assert.equal((await decodeBackup(encrypted, 'test-password')).settings.apiKey, 'text-secret')
+}))
+
+test('平台规则分别复用正文与候选标题生成逻辑', async () => {
+  const { testPlatformPrompt } = await import('../src/main/features/content/content-service')
+  const body = await testPlatformPrompt({ kind: 'body', platform: '公众号', topic: ' 测试主题 ', rule: '正文规则' }, async (system, user) => {
+    assert.equal(system, '正文规则'); assert.match(user, /主题：测试主题/)
+    return JSON.stringify({ content: '测试正文' })
+  })
+  assert.deepEqual(body, { kind: 'body', content: '测试正文' })
+  const titles = await testPlatformPrompt({ kind: 'title', platform: '公众号', content: '测试正文', rule: '标题规则' }, async (system, user) => {
+    assert.equal(system, '标题规则'); assert.match(user, /测试正文/)
+    return JSON.stringify(['一', '二', '三', '四', '五'])
+  })
+  assert.deepEqual(titles, { kind: 'title', titles: ['一', '二', '三', '四', '五'] })
+})
+
+test('流式备份支持跨块文件、加密校验和旧备份兼容', () => withRoot(async root => {
+  const { exportStreamBackup, isStreamBackup, verifyStreamBackup, restoreStreamBackup } = await import('../src/main/features/workspace/stream-backup')
+  const { createBackup } = await import('../src/main/features/workspace/backup')
+  const source = join(root, 'source'); await mkdir(join(source, '空目录'), { recursive: true })
+  const content = Buffer.alloc(3 * 1024 * 1024 + 7, 0xab); await writeFile(join(source, '大文件'), content)
+  const settings = { apiUrl: 'https://example.com', model: 'model', apiKey: 'secret', imageService: 'shared' as const, imageApiUrl: '', imageModel: '', imageApiKey: '' }
+  for (const password of ['', 'test-password']) {
+    const backup = join(root, password ? 'encrypted.postbackup' : 'plain.postbackup'), target = join(root, password ? 'encrypted' : 'plain')
+    const progress: import('../src/shared/workspace').BackupExportProgress[] = []
+    await exportStreamBackup(source, backup, settings, password, update => progress.push(update)); assert.equal(await isStreamBackup(backup), true)
+    assert.equal(progress[0].phase, 'preparing'); assert.ok(progress.some(update => update.phase === 'writing'))
+    assert.deepEqual(progress.at(-1), { phase: 'finishing', files: 1, bytes: content.length })
+    await verifyStreamBackup(backup, password); await mkdir(target)
+    const restored = await restoreStreamBackup(backup, password, target)
+    assert.equal(restored.apiKey, password ? 'secret' : '')
+    assert.deepEqual(await readFile(join(target, '大文件')), content)
+    assert.equal((await readdir(target)).includes('空目录'), true)
+    if (password) {
+      await assert.rejects(verifyStreamBackup(backup, 'wrong-password'), /密码错误/)
+      const bytes = await readFile(backup); bytes[bytes.length - 20] ^= 1; await writeFile(backup, bytes)
+      await assert.rejects(verifyStreamBackup(backup, password), /密码错误/)
+    }
+  }
+  const old = join(root, 'old.postbackup'); await writeFile(old, await createBackup(source, settings, 'test-password'))
+  assert.equal(await isStreamBackup(old), false)
+}))
+
+test('流式备份失败时清理未完成文件并保留已有文件', () => withRoot(async root => {
+  const { symlink } = await import('node:fs/promises')
+  const { exportStreamBackup } = await import('../src/main/features/workspace/stream-backup')
+  const source = join(root, 'source'), backup = join(root, 'backup'); await mkdir(source); await symlink(root, join(source, 'link'))
+  const settings = { apiUrl: '', model: '', apiKey: '', imageService: 'shared' as const, imageApiUrl: '', imageModel: '', imageApiKey: '' }
+  await assert.rejects(exportStreamBackup(source, backup, settings, ''), /符号链接/)
+  await assert.rejects(readFile(backup), /ENOENT/)
+  await writeFile(backup, 'existing')
+  await assert.rejects(exportStreamBackup(source, backup, settings, ''))
+  assert.equal(await readFile(backup, 'utf8'), 'existing')
+}))

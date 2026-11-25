@@ -1,3 +1,4 @@
+import { rememberWorkspace } from '../../../shared/recent-workspaces'
 import { defaultPlatformLinks, validPlatformLinks, type PlatformLink } from '../../../shared/platform-links'
 import { app, safeStorage } from 'electron'
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
@@ -6,7 +7,7 @@ import { randomUUID } from 'node:crypto'
 import { compactPlatformPrompts, isPlatformPrompts, resolvePlatformPrompts, resolveTitlePrompts, type PlatformPrompts } from '../../../shared/platform-prompts'
 import { defaultAccentColor, defaultPanelOpacity, isAppearanceMode, isPanelOpacity, type AppearanceMode, type AppSettings, type LegacySettings, type SettingsUpdate } from '../../../shared/settings'
 
-interface StoredSettings { appearance?: AppearanceMode; accentColor?: string; panelOpacity?: number; version: 1; apiUrl: string; model: string; draftsDirectory: string; encryptedApiKey: string | null; disableDefaultApiKey?: boolean; imageService?: 'shared' | 'custom'; imageApiUrl?: string; imageModel?: string; encryptedImageApiKey?: string | null; platformPrompts?: PlatformPrompts; titlePrompts?: PlatformPrompts; platformLinks?: PlatformLink[] }
+interface StoredSettings { recentWorkspaces?: string[]; appearance?: AppearanceMode; accentColor?: string; panelOpacity?: number; version: 1; apiUrl: string; model: string; draftsDirectory: string; encryptedApiKey: string | null; disableDefaultApiKey?: boolean; imageService?: 'shared' | 'custom'; imageApiUrl?: string; imageModel?: string; encryptedImageApiKey?: string | null; platformPrompts?: PlatformPrompts; titlePrompts?: PlatformPrompts; platformLinks?: PlatformLink[] }
 const empty: StoredSettings = { version: 1, apiUrl: '', model: '', draftsDirectory: '', encryptedApiKey: null }
 const selections = new Map<number, string>()
 let queue: Promise<unknown> = Promise.resolve()
@@ -28,7 +29,7 @@ function validModel(value: unknown): value is LegacySettings {
 function validStored(value: unknown): value is StoredSettings {
   if (!value || typeof value !== 'object') return false
   const data = value as Record<string, unknown>
-  return (data.appearance === undefined || isAppearanceMode(data.appearance)) && (data.panelOpacity === undefined || isPanelOpacity(data.panelOpacity)) && (data.accentColor === undefined || (typeof data.accentColor === 'string' && /^#[0-9a-f]{6}$/i.test(data.accentColor))) && data.version === 1 && validModel(value) && validString(data.draftsDirectory, 4096) && (data.encryptedApiKey === null || validString(data.encryptedApiKey, 65536)) && (data.imageService === undefined || data.imageService === 'shared' || data.imageService === 'custom') && (data.imageApiUrl === undefined || validString(data.imageApiUrl, 2048)) && (data.imageModel === undefined || validString(data.imageModel, 512)) && (data.encryptedImageApiKey === undefined || data.encryptedImageApiKey === null || validString(data.encryptedImageApiKey, 65536)) && (data.platformPrompts === undefined || isPlatformPrompts(data.platformPrompts)) && (data.titlePrompts === undefined || isPlatformPrompts(data.titlePrompts)) && (data.platformLinks === undefined || validPlatformLinks(data.platformLinks))
+  return (data.recentWorkspaces === undefined || (Array.isArray(data.recentWorkspaces) && data.recentWorkspaces.every((directory: unknown) => validString(directory, 4096) && directory.length > 0))) && (data.appearance === undefined || isAppearanceMode(data.appearance)) && (data.panelOpacity === undefined || isPanelOpacity(data.panelOpacity)) && (data.accentColor === undefined || (typeof data.accentColor === 'string' && /^#[0-9a-f]{6}$/i.test(data.accentColor))) && data.version === 1 && validModel(value) && validString(data.draftsDirectory, 4096) && (data.encryptedApiKey === null || validString(data.encryptedApiKey, 65536)) && (data.imageService === undefined || data.imageService === 'shared' || data.imageService === 'custom') && (data.imageApiUrl === undefined || validString(data.imageApiUrl, 2048)) && (data.imageModel === undefined || validString(data.imageModel, 512)) && (data.encryptedImageApiKey === undefined || data.encryptedImageApiKey === null || validString(data.encryptedImageApiKey, 65536)) && (data.platformPrompts === undefined || isPlatformPrompts(data.platformPrompts)) && (data.titlePrompts === undefined || isPlatformPrompts(data.titlePrompts)) && (data.platformLinks === undefined || validPlatformLinks(data.platformLinks))
 }
 export async function readSettings(): Promise<StoredSettings | null> {
   try {
@@ -111,7 +112,7 @@ export function saveSettings(senderId: number, update: unknown): Promise<AppSett
       if (!safeStorage.isEncryptionAvailable() || (process.platform === 'linux' && ['basic_text', 'unknown'].includes(safeStorage.getSelectedStorageBackend()))) throw new Error('此设备的安全存储不可用，无法保存 API 密钥。')
       encryptedImageApiKey = safeStorage.encryptString(data.imageApiKey.value).toString('base64')
     }
-    const next: StoredSettings = { version: 1, appearance: data.appearance ?? existing.appearance, accentColor: data.accentColor ?? existing.accentColor, panelOpacity: data.panelOpacity ?? existing.panelOpacity, apiUrl: data.apiUrl, model: data.model, draftsDirectory: data.draftsDirectory, encryptedApiKey, disableDefaultApiKey, imageService: data.imageService, imageApiUrl: data.imageApiUrl, imageModel: data.imageModel, encryptedImageApiKey, platformPrompts: data.platformPrompts === undefined ? existing.platformPrompts : compactPlatformPrompts(data.platformPrompts), titlePrompts: data.titlePrompts === undefined ? existing.titlePrompts : data.titlePrompts, platformLinks: data.platformLinks ?? existing.platformLinks }
+    const next: StoredSettings = { version: 1, recentWorkspaces: rememberWorkspace(existing.recentWorkspaces ?? [], data.draftsDirectory), appearance: data.appearance ?? existing.appearance, accentColor: data.accentColor ?? existing.accentColor, panelOpacity: data.panelOpacity ?? existing.panelOpacity, apiUrl: data.apiUrl, model: data.model, draftsDirectory: data.draftsDirectory, encryptedApiKey, disableDefaultApiKey, imageService: data.imageService, imageApiUrl: data.imageApiUrl, imageModel: data.imageModel, encryptedImageApiKey, platformPrompts: data.platformPrompts === undefined ? existing.platformPrompts : compactPlatformPrompts(data.platformPrompts), titlePrompts: data.titlePrompts === undefined ? existing.titlePrompts : data.titlePrompts, platformLinks: data.platformLinks ?? existing.platformLinks }
     await writeSettings(next)
     selections.delete(senderId)
     return publicSettings(next)
@@ -131,21 +132,31 @@ export function savePlatformConfig(input: unknown): Promise<AppSettings> {
 }
 
 // Backup credentials leave safe storage only inside the main process, immediately before encryption.
-export async function settingsForBackup(): Promise<import('../workspace/backup').BackupSettings> {
+export async function settingsForBackup(includeCredentials = true): Promise<import('../workspace/backup').BackupSettings> {
   const data = await readSettings() ?? { ...empty }
-  const runtime = await getRuntimeSettings()
-  const imageApiKey = data.encryptedImageApiKey ? safeStorage.decryptString(Buffer.from(data.encryptedImageApiKey, 'base64')) : ''
+  const runtime = includeCredentials ? await getRuntimeSettings() : { ...publicSettings(data), apiKey: '' }
+  const imageApiKey = includeCredentials && data.encryptedImageApiKey ? safeStorage.decryptString(Buffer.from(data.encryptedImageApiKey, 'base64')) : ''
   return { apiUrl: runtime.apiUrl, model: runtime.model, apiKey: runtime.apiKey, imageService: data.imageService ?? 'shared', imageApiUrl: data.imageApiUrl ?? '', imageModel: data.imageModel || process.env.REVIEW_IMAGE_MODEL || '', imageApiKey, platformPrompts: data.platformPrompts, titlePrompts: data.titlePrompts }
 }
-export function switchWorkspace(directory: string): Promise<AppSettings> {
-  return serialize(async () => { const current = await readSettings() ?? { ...empty }; if (!(await stat(directory)).isDirectory()) throw new Error('工作空间目录无效。'); const next = { ...current, draftsDirectory: directory }; await writeSettings(next); return publicSettings(next) })
+export async function listWorkspaces(): Promise<{ current: string; recent: string[] }> {
+  const current = await readSettings() ?? { ...empty }
+  return { current: current.draftsDirectory, recent: rememberWorkspace(current.recentWorkspaces ?? [], current.draftsDirectory) }
+}
+export function switchWorkspace(directory: string, requireKnown = false): Promise<AppSettings> {
+  return serialize(async () => {
+    const current = await readSettings() ?? { ...empty }
+    if (requireKnown && !rememberWorkspace(current.recentWorkspaces ?? [], current.draftsDirectory).includes(directory)) throw new Error('工作区操作：该工作区不在列表中，请重新打开。')
+    try { if (!(await stat(directory)).isDirectory()) throw new Error() } catch { throw new Error('工作区操作：找不到工作区目录，请检查目录是否已移动。') }
+    const next = { ...current, draftsDirectory: directory, recentWorkspaces: rememberWorkspace(rememberWorkspace(current.recentWorkspaces ?? [], current.draftsDirectory), directory) }
+    await writeSettings(next); return publicSettings(next)
+  })
 }
 export function restoreWorkspaceSettings(directory: string, backup: import('../workspace/backup').BackupSettings): Promise<AppSettings> {
   return serialize(async () => {
     if ((backup.titlePrompts !== undefined && !isPlatformPrompts(backup.titlePrompts)) || (backup.platformPrompts !== undefined && !isPlatformPrompts(backup.platformPrompts)) || !validModel(backup) || !validModel({ apiUrl: backup.imageApiUrl, model: backup.imageModel }) || !validString(backup.apiKey, 8192) || !validString(backup.imageApiKey, 8192) || !['shared', 'custom'].includes(backup.imageService)) throw new Error('备份设置无效。')
-    if ((backup.apiKey || backup.imageApiKey) && (!safeStorage.isEncryptionAvailable() || (process.platform === 'linux' && ['basic_text', 'unknown'].includes(safeStorage.getSelectedStorageBackend())))) throw new Error('此设备的安全存储不可用，无法恢复 API 密钥。')
+    if (backup.credentialsIncluded !== false && (backup.apiKey || backup.imageApiKey) && (!safeStorage.isEncryptionAvailable() || (process.platform === 'linux' && ['basic_text', 'unknown'].includes(safeStorage.getSelectedStorageBackend())))) throw new Error('此设备的安全存储不可用，无法恢复 API 密钥。')
     const current = await readSettings() ?? { ...empty }
-    const data: StoredSettings = { version: 1, appearance: current.appearance, accentColor: current.accentColor, panelOpacity: current.panelOpacity, draftsDirectory: directory, apiUrl: backup.apiUrl, model: backup.model, encryptedApiKey: backup.apiKey ? safeStorage.encryptString(backup.apiKey).toString('base64') : null, disableDefaultApiKey: !backup.apiKey, imageService: backup.imageService, imageApiUrl: backup.imageApiUrl, imageModel: backup.imageModel, encryptedImageApiKey: backup.imageApiKey ? safeStorage.encryptString(backup.imageApiKey).toString('base64') : null, platformPrompts: backup.platformPrompts, titlePrompts: backup.titlePrompts, platformLinks: current.platformLinks }
+    const data: StoredSettings = { version: 1, recentWorkspaces: rememberWorkspace(rememberWorkspace(current.recentWorkspaces ?? [], current.draftsDirectory), directory), appearance: current.appearance, accentColor: current.accentColor, panelOpacity: current.panelOpacity, draftsDirectory: directory, apiUrl: backup.apiUrl, model: backup.model, encryptedApiKey: backup.credentialsIncluded === false ? current.encryptedApiKey : backup.apiKey ? safeStorage.encryptString(backup.apiKey).toString('base64') : null, disableDefaultApiKey: backup.credentialsIncluded === false ? current.disableDefaultApiKey : !backup.apiKey, imageService: backup.imageService, imageApiUrl: backup.imageApiUrl, imageModel: backup.imageModel, encryptedImageApiKey: backup.credentialsIncluded === false ? current.encryptedImageApiKey : backup.imageApiKey ? safeStorage.encryptString(backup.imageApiKey).toString('base64') : null, platformPrompts: backup.platformPrompts, titlePrompts: backup.titlePrompts, platformLinks: current.platformLinks }
     await writeSettings(data); return publicSettings(data)
   })
 }

@@ -104,6 +104,40 @@ async function changeExclusive(root: string, change: WorkspaceChange): Promise<W
     if (drafts.some((item) => item.id !== draft.id && (index.titles[item.id] ?? item.title) === title)) throw new Error('已有同名文章，请更换标题。')
     if (title === draft.title) delete index.titles[draft.id]; else index.titles[draft.id] = title
   }
+  else if (change.type === 'moveNodes') {
+    if (change.folderId !== null) getFolder(change.folderId)
+    const drafts = await listDrafts(root)
+    const nodes = [...new Set(change.nodes)]
+    if (!nodes.length) throw new Error('请选择要移动的项目。')
+    const selectedFolders = new Set(nodes.filter(node => node.startsWith('folder:')).map(node => node.slice(7)))
+    for (const id of selectedFolders) getFolder(id)
+    for (let parent = change.folderId; parent !== null; parent = getFolder(parent).parentId) {
+      if (selectedFolders.has(parent)) throw new Error('不能将文件夹移动到自身或其子文件夹。')
+    }
+    const movedFolders = index.folders.filter(folder => {
+      if (!selectedFolders.has(folder.id)) return false
+      for (let parent = folder.parentId; parent !== null; parent = getFolder(parent).parentId) if (selectedFolders.has(parent)) return false
+      return true
+    })
+    const names = new Set(index.folders.filter(folder => folder.parentId === change.folderId && !selectedFolders.has(folder.id)).map(folder => folder.name))
+    for (const folder of movedFolders) {
+      if (names.has(folder.name)) throw new Error('目标目录中已有同名文件夹。')
+      names.add(folder.name)
+    }
+    for (const node of nodes) if (node.startsWith('article:') && !drafts.some(draft => draft.id === node.slice(8))) throw new Error('文章不存在。')
+    const moved = new Set<WorkspaceNodeId>()
+    for (const folder of movedFolders) { if (folder.parentId !== change.folderId) { folder.parentId = change.folderId; moved.add(`folder:${folder.id}`) } }
+    for (const node of nodes) if (node.startsWith('article:')) {
+      const id = node.slice(8)
+      let parent: string | null = index.assignments[id] ?? null
+      let contained = false
+      while (parent !== null) { if (selectedFolders.has(parent)) { contained = true; break }; parent = getFolder(parent).parentId }
+      if (contained || (index.assignments[id] ?? null) === change.folderId) continue
+      if (change.folderId === null) delete index.assignments[id]; else index.assignments[id] = change.folderId
+      moved.add(node)
+    }
+    removeFromOrder(index, moved)
+  }
   else if (change.type === 'moveDraft') {
     const drafts = await listDrafts(root)
     if (!drafts.some((item) => item.id === change.draftId)) throw new Error('草稿不存在。')

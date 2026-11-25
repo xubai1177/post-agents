@@ -1,10 +1,11 @@
 import { ResearchUnavailableError } from '../../errors'
 import { resolvePlatformPrompts, resolveTitlePrompts, type PlatformPrompts } from '../../../shared/platform-prompts'
-import type { CreateRequest, CreateResult, Platform } from '../../../shared/drafts'
+import type { CreateRequest, CreateResult, Platform, TestPlatformPromptRequest, TestPlatformPromptResult } from '../../../shared/drafts'
 import type { GenerationProgress, ResearchRecord } from '../../../shared/research'
 import { generateDrafts } from './generation'
 import { researchTopic, savePlatformResearch, type SourceMaterial } from '../research/research'
 import { writeContent } from './content-pipeline'
+import { generateTitleCandidates } from './titles'
 import { readDraft, savePlatformTitle } from '../drafts/draft-store'
 import { researchWithModel } from '../../infrastructure/model-search'
 import { createTextModel } from '../../infrastructure/text-model'
@@ -23,6 +24,17 @@ function removeLeadingTitle(body: string, titles: string[]): string {
   return remaining && titles.includes(text) ? remaining : body
 }
 
+function creationContext(request: Pick<CreateRequest, 'title' | 'audience' | 'angle'>): string {
+  return [`主题：${request.title}`, request.audience.trim() && `受众：${request.audience.trim()}`, request.angle?.trim() && `创作角度：${request.angle.trim()}`].filter(Boolean).join('\n')
+}
+
+export async function testPlatformPrompt(request: TestPlatformPromptRequest, call: ReturnType<typeof createTextModel>): Promise<TestPlatformPromptResult> {
+  if (request.kind === 'title') return { kind: 'title', titles: await generateTitleCandidates(request.platform, request.content, request.rule, call) }
+  const body = resolvePlatformPrompts({ [request.platform]: request.rule })[request.platform]
+  const generated = await writeContent(call, request.platform, creationContext({ title: request.topic.trim(), audience: '' }), { body }, [])
+  return { kind: 'body', content: removeLeadingTitle(generated.content, [request.topic.trim()]) }
+}
+
 export async function generateContent(
   request: CreateRequest,
   config: { draftsDirectory: string; apiUrl: string; model: string; apiKey: string; platformPrompts?: PlatformPrompts; titlePrompts?: PlatformPrompts },
@@ -33,11 +45,7 @@ export async function generateContent(
   if (!config.draftsDirectory) throw new Error('请先在设置中选择草稿目录。')
   if (!config.apiUrl || !config.model || !config.apiKey) throw new Error('请先在设置中配置模型地址、模型名称和密钥。')
 
-  const context = [
-    `主题：${request.title}`,
-    request.audience.trim() && `受众：${request.audience.trim()}`,
-    request.angle?.trim() && `创作角度：${request.angle.trim()}`
-  ].filter(Boolean).join('\n')
+  const context = creationContext(request)
   let sources: SourceMaterial[] = []
   if (request.research === 'online') {
     progress('research')

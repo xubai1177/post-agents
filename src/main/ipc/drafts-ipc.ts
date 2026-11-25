@@ -3,7 +3,7 @@ import { platforms, type CreateRequest, type CreateResult, type Platform } from 
 import { getDraftsDirectory } from '../features/settings/settings'
 import { listDrafts, readDraft, saveDraft, readPlatformTitle, savePlatformTitle } from '../features/drafts/draft-store'
 import { readResearch, readPlatformResearch } from '../features/research/research'
-import { articleQueue, createContent, onArticleQueueChanged, regenerateArticle, optimizeArticle, createTitles } from '../composition'
+import { articleQueue, createContent, onArticleQueueChanged, regenerateArticle, optimizeArticle, createTitles, testPlatformRules } from '../composition'
 import { generateDrafts } from '../features/content/generation'
 import { assertAvailableArticleTitle } from '../features/workspace/workspace-index'
 import { ResearchUnavailableError } from '../errors'
@@ -35,6 +35,14 @@ function handle<T>(event: Electron.IpcMainInvokeEvent, run: () => Promise<T>) {
   return respond(event, async () => { try { return await run() } catch (error) { if (error instanceof ResearchUnavailableError) throw error; throw new Error(`文章操作：${safeMessage(error).replaceAll('草稿目录', '工作空间').replaceAll('草稿', '文章')}`) } })
 }
 export function registerDrafts(): void {
+  ipcMain.handle('drafts:test-platform-prompt', (event, value: unknown) => handle(event, async () => {
+    if (!value || typeof value !== 'object') throw new Error('文章操作：测试参数无效。')
+    const r = value as Record<string, unknown>
+    if (!isPlatform(r.platform) || typeof r.rule !== 'string' || r.rule.length > 4000 || r.rule.includes('\0')) throw new Error('文章操作：测试参数无效。')
+    if (r.kind === 'body' && typeof r.topic === 'string' && !!r.topic.trim() && r.topic.length <= 100) return testPlatformRules({ kind: 'body', platform: r.platform, topic: r.topic, rule: r.rule })
+    if (r.kind === 'title' && typeof r.content === 'string' && !!r.content.trim() && r.content.length <= 60000) return testPlatformRules({ kind: 'title', platform: r.platform, content: r.content, rule: r.rule })
+    throw new Error('文章操作：测试参数无效。')
+  }))
   ipcMain.handle('drafts:generate-titles', (event, value: unknown) => handle(event, async () => {
     if (!value || typeof value !== 'object') throw new Error('文章操作：生成参数无效。')
     const r = value as Record<string, unknown>

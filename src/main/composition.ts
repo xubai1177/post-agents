@@ -1,8 +1,8 @@
-import type { CreateRequest, RegenerateRequest, OptimizeRequest, GenerateTitlesRequest } from '../shared/drafts'
+import type { CreateRequest, RegenerateRequest, OptimizeRequest, GenerateTitlesRequest, TestPlatformPromptRequest } from '../shared/drafts'
 import type { ArticleImagesRequest, ImageRequest, ImageJob } from '../shared/images'
 import type { GenerationProgress } from '../shared/research'
 import { getImageSettings, getRuntimeSettings } from './features/settings/settings'
-import { generateContent } from './features/content/content-service'
+import { generateContent, testPlatformPrompt } from './features/content/content-service'
 import { generateCreatedArticleImages } from './features/images/article-images'
 import { generateImageSet } from './features/images/image-service'
 import { readDraft, readPlatformTitle } from './features/drafts/draft-store'
@@ -16,6 +16,12 @@ import { ArticleQueue } from './features/content/article-queue'
 
 export async function createContent(request: CreateRequest, progress: (phase: GenerationProgress) => void) {
   return generateContent(request, await getRuntimeSettings(), progress)
+}
+
+export async function testPlatformRules(request: TestPlatformPromptRequest) {
+  const config = await getRuntimeSettings()
+  if (!config.apiUrl || !config.model || !config.apiKey) throw new Error('请先在设置中配置模型地址、模型名称和密钥。')
+  return testPlatformPrompt(request, createTextModel(config))
 }
 
 export function createImages(request: ImageRequest) {

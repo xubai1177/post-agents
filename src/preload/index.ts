@@ -7,6 +7,10 @@ import type { ImagesApi, ArticleImagesProgress } from '../shared/images'
 import type { UpdatesApi, UpdateState } from '../shared/updates'
 import type { WorkspaceApi } from '../shared/workspace'
 
+window.addEventListener('DOMContentLoaded', () => {
+  document.documentElement.dataset.windowPlatform = process.platform
+})
+
 const settings: SettingsApi = {
   load: (legacy) => ipcRenderer.invoke('settings:load', legacy),
   savePlatformConfig: (config) => ipcRenderer.invoke('settings:save-platform-config', config),
@@ -27,6 +31,7 @@ const drafts: DraftsApi = {
   createBlank: (request) => ipcRenderer.invoke('drafts:create-blank', request),
   optimize: (request) => ipcRenderer.invoke('drafts:optimize', request),
   regenerate: (request) => ipcRenderer.invoke('drafts:regenerate', request),
+  testPlatformPrompt: (request) => ipcRenderer.invoke('drafts:test-platform-prompt', request),
   generateTitles: (request) => ipcRenderer.invoke('drafts:generate-titles', request),
   research: (id, platform) => ipcRenderer.invoke('drafts:research', id, platform),
   openSource: (id, url, platform) => ipcRenderer.invoke('drafts:open-source', id, url, platform),
@@ -75,6 +80,18 @@ const topics: TopicsApi = {
 contextBridge.exposeInMainWorld('topicsApi', topics)
 
 const workspace: WorkspaceApi = {
+  onExportProgress: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, progress: import('../shared/workspace').BackupExportProgress) => callback(progress)
+    ipcRenderer.on('workspace:export-progress', listener)
+    return () => ipcRenderer.removeListener('workspace:export-progress', listener)
+  },
+  onMenuAction: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, action: unknown) => { if (action === 'open' || action === 'create' || action === 'import' || action === 'export' || action === 'settings') callback(action) }
+    ipcRenderer.on('workspace:menu-action', listener)
+    return () => ipcRenderer.removeListener('workspace:menu-action', listener)
+  },
+  listWorkspaces: () => ipcRenderer.invoke('workspace:list'),
+  switchWorkspace: (directory) => ipcRenderer.invoke('workspace:switch', directory),
   read: () => ipcRenderer.invoke('workspace:read'),
   change: (change) => ipcRenderer.invoke('workspace:change', change),
   deleteArticle: (id) => ipcRenderer.invoke('workspace:delete-article', id),
