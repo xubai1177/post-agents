@@ -103,6 +103,23 @@ jobs:
       - run: npm test
       - run: node --test tests/updates-manifest.test.cjs
       - run: npm run build
+      # v0.0.9 was tagged before GitHub-hosted keychain trust behavior was verified.
+      - name: Adapt v0.0.9 signing for hosted runners
+        if: runner.os == 'macOS' && inputs.tag == 'v0.0.9'
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+          path = Path('scripts/build-mac-release.sh')
+          text = path.read_text()
+          if hashlib.sha256(path.read_bytes()).hexdigest() != '58a08b8d7d60396dfd055828d733975b605be3ddd799c0f0f8c887720b5c3653':
+              raise SystemExit('Unexpected v0.0.9 signing script')
+          text = text.replace('set -euo pipefail\n', 'set -euo pipefail\nif [[ "${GITHUB_ACTIONS:-}" != true || "${RUNNER_ENVIRONMENT:-}" != github-hosted ]]; then exit 1; fi\n', 1)
+          text = text.replace('  security remove-trusted-cert "$TEST_DIR/cert.pem" >/dev/null 2>&1 || true\n', '')
+          text = text.replace('security add-trusted-cert -r trustRoot', 'sudo security add-trusted-cert -d -r trustRoot')
+          path.write_text(text)
+          PY
       - name: Create Windows installer
         if: runner.os == 'Windows'
         run: npx --yes electron-builder@26.0.12 ${{ matrix.target }} --publish never

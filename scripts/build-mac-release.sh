@@ -1,5 +1,9 @@
 #!/bin/bash
 set -euo pipefail
+if [[ "${GITHUB_ACTIONS:-}" != true || "${RUNNER_ENVIRONMENT:-}" != github-hosted ]]; then
+  echo 'Mac release signing requires an ephemeral GitHub-hosted runner.' >&2
+  exit 1
+fi
 : "${LINGGAO_MAC_P12_BASE64:?Missing fixed signing certificate}"
 : "${LINGGAO_MAC_P12_PASSWORD:?Missing signing certificate password}"
 : "${LINGGAO_MAC_CERT_SHA1:?Missing signing certificate fingerprint}"
@@ -9,7 +13,6 @@ KEYCHAIN="$TEST_DIR/signing.keychain-db"
 KEYCHAIN_PASSWORD=$(openssl rand -hex 24)
 cleanup() {
   security list-keychains -d user -s "$HOME/Library/Keychains/login.keychain-db" /Library/Keychains/System.keychain >/dev/null 2>&1 || true
-  security remove-trusted-cert "$TEST_DIR/cert.pem" >/dev/null 2>&1 || true
   security delete-keychain "$KEYCHAIN" >/dev/null 2>&1 || true
   rm -rf "$TEST_DIR"
 }
@@ -30,7 +33,7 @@ security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
 security import "$TEST_DIR/cert.p12" -k "$KEYCHAIN" -P "$LINGGAO_MAC_P12_PASSWORD" -T /usr/bin/codesign >/dev/null
 unset LINGGAO_MAC_P12_PASSWORD
 security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
-security add-trusted-cert -r trustRoot -p codeSign -k "$KEYCHAIN" "$TEST_DIR/cert.pem"
+sudo security add-trusted-cert -d -r trustRoot -p codeSign -k "$KEYCHAIN" "$TEST_DIR/cert.pem"
 security list-keychains -d user -s "$KEYCHAIN" "$HOME/Library/Keychains/login.keychain-db" /Library/Keychains/System.keychain
 security find-identity -v -p codesigning "$KEYCHAIN" | grep -Fiq "$FINGERPRINT" || { echo 'Signing identity is unavailable.' >&2; exit 1; }
 npx --yes electron-builder@26.0.12 --mac "$1" --publish never -c.mac.identity="$FINGERPRINT" -c.forceCodeSigning=true
