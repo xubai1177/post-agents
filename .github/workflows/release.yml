@@ -112,10 +112,11 @@ jobs:
         run: |
           test "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = true
           shopt -s nullglob
-          assets=(dist/*.exe dist/*.dmg dist/*.zip dist/latest.yml)
+          assets=(dist/*.exe dist/*.dmg dist/*.zip)
           if [[ "$RUNNER_OS" == Windows ]]; then
             test -s dist/latest.yml
             node scripts/verify-update.cjs dist "${TAG#v}"
+            assets+=(dist/latest.yml)
           fi
           if (( ${#assets[@]} == 0 )); then
             echo "No installers were produced." >&2
