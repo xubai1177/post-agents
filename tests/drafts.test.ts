@@ -1405,3 +1405,125 @@ test('流式备份失败时清理未完成文件并保留已有文件', () => wi
   await assert.rejects(exportStreamBackup(source, backup, settings, ''))
   assert.equal(await readFile(backup, 'utf8'), 'existing')
 }))
+
+test('发现结果只接受有效帖子并保留搜索访问参数', async () => {
+  const { parseFeeds } = await import('../src/main/features/discovery/parse')
+  const result = parseFeeds([{ id: 'abcdef123456', xsecToken: 'ABC_123=', noteCard: { displayTitle: '测试帖子', user: { nickname: '作者' }, interactInfo: { likedCount: '12' } } }, { id: '../../bad', xsecToken: 'A', noteCard: { displayTitle: '不安全' } }, { id: 'abcdef123456', xsecToken: 'ABC', noteCard: { displayTitle: '重复' } }])
+  assert.deepEqual(result.items, [{ id: 'abcdef123456', title: '测试帖子', author: '作者', likes: '12', hasCover: false }])
+  assert.equal(new URL(result.urls.get('abcdef123456')!).hostname, 'www.xiaohongshu.com')
+  assert.equal(new URL(result.urls.get('abcdef123456')!).searchParams.get('xsec_token'), 'ABC_123=')
+})
+test('帖子改写要求正文且只返回候选，不进行保存', async () => {
+  const { rewriteDiscovery } = await import('../src/main/features/discovery/rewrite')
+  let system = '', user = ''
+  const result = await rewriteDiscovery({ title: '参考标题', content: '参考正文' }, async (a, b) => { system = a; user = b; return ' 改写候选 ' })
+  assert.equal(result, '改写候选'); assert.match(system, /不可信/); assert.match(user, /参考正文/)
+  await assert.rejects(rewriteDiscovery({ title: '标题', content: ' ' }, async () => '结果'), /正文为空/)
+  await assert.rejects(rewriteDiscovery({ title: '标题', content: '正文' }, async () => ' '), /结果为空/)
+})
+
+
+test('小红书搜索地址直接使用带斜杠的 HTTPS 路径，避免不安全的重定向', async () => {
+  const { buildSearchUrl } = await import('../src/main/features/discovery/parse')
+  const url = new URL(buildSearchUrl('北京周末 & 亲子'))
+  assert.equal(url.origin, 'https://www.xiaohongshu.com')
+  assert.equal(url.pathname, '/search_result/')
+  assert.equal(url.searchParams.get('keyword'), '北京周末 & 亲子')
+})
+
+
+test('小红书图片只允许可信 CDN 主机且不会接受伪造域名', async () => {
+  const { imageUrl } = await import('../src/main/features/discovery/media')
+  assert.equal(imageUrl('http://sns-webpic-qc.xhscdn.com/a.webp'), 'https://sns-webpic-qc.xhscdn.com/a.webp')
+  assert.equal(imageUrl('https://xhscdn.com.evil.test/a'), null)
+  assert.equal(imageUrl('https://user@xhscdn.com/a'), null)
+  assert.equal(imageUrl('https://127.0.0.1/a'), null)
+})
+
+test('搜索结果保留可验证的封面标记而不返回远程地址', async () => {
+  const { parseFeeds } = await import('../src/main/features/discovery/parse')
+  const result = parseFeeds([{ id: 'abcdef123456', xsecToken: 'ABC', noteCard: { displayTitle: '封面', cover: { urlDefault: 'https://sns-webpic-qc.xhscdn.com/a.webp' } } }])
+  assert.equal(result.items[0].hasCover, true)
+  assert.equal(result.covers.get('abcdef123456'), 'https://sns-webpic-qc.xhscdn.com/a.webp')
+  assert.equal(JSON.stringify(result.items).includes('xhscdn.com'), false)
+})
+
+test('参考帖子图片生成候选，并防止变更后的文案误用旧图片', async () => {
+  const { generateReferenceImage, referenceImageForSave, clearReferenceImage } = await import('../src/main/features/discovery/reference-image')
+  const input = { id: '12345678', index: 1, title: '新标题', content: '改写后的正文' }
+  const bytes = Buffer.from('89504e470d0a1a0a00000000', 'hex')
+  let sentReference = '', sentPrompt = ''
+  const result = await generateReferenceImage(input, {
+    readImage: async (id, index) => { assert.equal(id, input.id); assert.equal(index, 1); return 'data:image/png;base64,reference' },
+    describe: async image => { sentReference = image; return '蓝色的简洁插画' },
+    generate: async prompt => { sentPrompt = prompt; return bytes }
+  })
+  assert.equal(sentReference, 'data:image/png;base64,reference')
+  assert.match(sentPrompt, /蓝色的简洁插画/)
+  assert.match(sentPrompt, /改写后的正文/)
+  assert.match(result.dataUrl, /^data:image\/png;base64,/)
+  assert.deepEqual(referenceImageForSave(result.token, input), bytes)
+  assert.throws(() => referenceImageForSave(result.token, { ...input, content: '已修改' }), /重新生成/)
+  assert.throws(() => referenceImageForSave(result.token, { ...input, id: '87654321' }), /重新生成/)
+  clearReferenceImage(result.token)
+  assert.throws(() => referenceImageForSave(result.token, input), /重新生成/)
+})
+
+test('参考图片无法读取或模型不支持图片理解时不会调用图片生成', async () => {
+  const { generateReferenceImage } = await import('../src/main/features/discovery/reference-image')
+  const input = { id: '12345678', index: 0, title: '标题', content: '正文' }
+  let called = false
+  const generate = async () => { called = true; return Buffer.alloc(0) }
+  await assert.rejects(generateReferenceImage(input, { readImage: async () => null, describe: async () => '', generate }), /参考图片加载失败/)
+  await assert.rejects(generateReferenceImage(input, { readImage: async () => 'data:image/png;base64,x', describe: async () => { throw new Error('unsupported') }, generate }), /支持图片理解/)
+  assert.equal(called, false)
+})
+
+test('单独改图无需文案，支持独立保存且不覆盖同名图片', () => withRoot(async root => {
+  const { rewriteImage, standaloneImage, downloadStandaloneImage } = await import('../src/main/features/discovery/reference-image')
+  const input = { id: '12345678', index: 2 }
+  const bytes = Buffer.from('89504e470d0a1a0a00000000', 'hex')
+  let prompt = ''
+  const result = await rewriteImage(input, { readImage: async (id, index) => { assert.equal(id, input.id); assert.equal(index, input.index); return 'data:image/png;base64,reference' }, describe: async () => '蓝色插画', generate: async text => { prompt = text; return bytes } })
+  assert.match(prompt, /蓝色插画/)
+  assert.match(prompt, /不使用帖子正文或改写文案/)
+  assert.deepEqual(standaloneImage(result.token, input.id), bytes)
+  assert.throws(() => standaloneImage(result.token, '87654321'), /失效/)
+  assert.equal(await downloadStandaloneImage(root, result.token, input.id), '改写图片.png')
+  assert.equal(await downloadStandaloneImage(root, result.token, input.id), '改写图片（2）.png')
+  assert.deepEqual(await readFile(join(root, '改写图片.png')), bytes)
+}))
+
+test('帖子导出为独立目录，重名不覆盖并保留部分成功结果', () => withRoot(async root => {
+  const { exportBundle } = await import('../src/main/features/discovery/export-bundle')
+  const input = { title: '帖子/示例', content: '# 正文\n内容', images: [
+    { name: '图片01', read: async () => ({ bytes: Buffer.from('image'), ext: 'png' }) },
+    { name: '图片02', read: async () => null }
+  ] }
+  const first = await exportBundle(root, input)
+  assert.deepEqual(first, { folder: '帖子 示例', savedImages: 1, failedImages: 1 })
+  assert.equal(await readFile(join(root, first.folder, '内容.md'), 'utf8'), input.content)
+  assert.equal(await readFile(join(root, first.folder, '图片01.png'), 'utf8'), 'image')
+  const second = await exportBundle(root, { ...input, content: '另一份', images: [] })
+  assert.equal(second.folder, '帖子 示例（2）')
+  assert.equal(await readFile(join(root, first.folder, '内容.md'), 'utf8'), input.content)
+  assert.equal(await readFile(join(root, second.folder, '内容.md'), 'utf8'), '另一份')
+}))
+
+test('保存原帖正文和全部原图，来源链接不包含临时访问参数', () => withRoot(async root => {
+  const { exportOriginalPost } = await import('../src/main/features/discovery/export-bundle')
+  const post = { id: '12345678', title: '原帖标题', author: '作者', content: '原帖正文', imageCount: 3 }
+  const indexes: number[] = []
+  const result = await exportOriginalPost(root, post, async (id, index) => {
+    assert.equal(id, post.id); indexes.push(index)
+    return index === 1 ? null : `data:image/${index === 0 ? 'jpeg' : 'webp'};base64,aGVsbG8=`
+  })
+  assert.deepEqual(indexes, [0, 1, 2])
+  assert.equal(result.savedImages, 2)
+  assert.equal(result.failedImages, 1)
+  const text = await readFile(join(root, result.folder, '内容.md'), 'utf8')
+  assert.match(text, /原帖正文/)
+  assert.match(text, /xiaohongshu\.com\/explore\/12345678/)
+  assert.doesNotMatch(text, /xsec_token/)
+  assert.deepEqual((await readdir(join(root, result.folder))).sort(), ['内容.md', '图片01.jpg', '图片03.webp'].sort())
+}))

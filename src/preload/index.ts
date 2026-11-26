@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type { DiscoveryApi } from '../shared/discovery'
 import type { SettingsApi } from '../shared/settings'
 import type { DraftsApi } from '../shared/drafts'
 import type { GenerationProgress } from '../shared/research'
@@ -118,3 +119,20 @@ const updates: UpdatesApi = {
   }
 }
 contextBridge.exposeInMainWorld('updatesApi', updates)
+
+const discovery: DiscoveryApi = {
+  account: () => ipcRenderer.invoke('discovery:account'),
+  image: (id, index) => ipcRenderer.invoke('discovery:image', id, index),
+  login: () => ipcRenderer.invoke('discovery:login'),
+  logout: () => ipcRenderer.invoke('discovery:logout'),
+  search: query => ipcRenderer.invoke('discovery:search', query),
+  detail: id => ipcRenderer.invoke('discovery:detail', id),
+  exportOriginal: id => ipcRenderer.invoke('discovery:export-original', id),
+  rewrite: id => ipcRenderer.invoke('discovery:rewrite', id),
+  rewriteImage: (id, index) => ipcRenderer.invoke('discovery:rewrite-image', id, index),
+  downloadRewrittenImage: (id, token) => ipcRenderer.invoke('discovery:download-rewritten-image', id, token),
+  generateImage: input => ipcRenderer.invoke('discovery:generate-image', input),
+  save: input => ipcRenderer.invoke('discovery:save', input),
+  openOriginal: id => ipcRenderer.invoke('discovery:open-original', id)
+}
+contextBridge.exposeInMainWorld('discoveryApi', discovery)

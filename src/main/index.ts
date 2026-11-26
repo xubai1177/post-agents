@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { registerSettings } from './ipc/settings-ipc'
 import { registerDrafts } from './ipc/drafts-ipc'
 import { registerTopics } from './ipc/topics-ipc'
+import { registerDiscovery } from './ipc/discovery-ipc'
 import { registerImages } from './ipc/images-ipc'
 import { registerUpdates } from './features/updates/updates'
 import { registerWorkspace } from './ipc/workspace-ipc'
@@ -55,6 +56,7 @@ app.whenReady().then(() => {
   registerImages()
   registerWorkspace()
   registerTopics()
+  registerDiscovery()
   registerUpdates()
   const workspaceAction = (action: WorkspaceMenuAction) => {
     const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
