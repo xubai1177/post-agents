@@ -20,7 +20,7 @@ export interface TopicWorkspace { version: 1; batches: TopicRecord[]; tasks: Top
 export interface TopicsApi {
   readRecords: () => Promise<Result<TopicWorkspace>>
   saveRecords: (data: TopicWorkspace) => Promise<Result<TopicWorkspace>>
-  startBatch: (request: { batchId: string; indexes: number[]; platforms: Platform[]; imageStyle: ImageStyle; generateImages: boolean; folderId: string }) => Promise<Result<void>>
+  startBatch: (request: { batchId: string; indexes: number[]; platforms: Platform[]; imageStyle: ImageStyle; generateImages: boolean; folderId: string }) => Promise<Result<{ started: number; skipped: number; failed: number }>>
   start: (request: TopicRequest) => Promise<Result<void>>
   retry: (id: string, mode: 'retry' | 'skip') => Promise<Result<void>>
   onChanged: (callback: () => void) => () => void

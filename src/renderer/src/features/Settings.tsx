@@ -1,3 +1,4 @@
+import { VoiceSettings } from './VoiceSettings'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -100,7 +101,7 @@ export function Settings({ onSaved, softwareUpdates }: { onSaved: (directoryChan
       setSettings(result.value); setAccentColor(result.value.accentColor); setPanelOpacity(result.value.panelOpacity); setApiUrl(result.value.apiUrl); setModel(result.value.model); setDirectory(result.value.draftsDirectory); setApiKey(''); setClearKey(false); setImageKey(''); setClearImageKey(false); showMessage('设置已保存。'); window.dispatchEvent(new Event('appearance-saved')); onSaved(result.value.draftsDirectory !== settings.draftsDirectory)
     } catch { setError('保存失败，请检查本机权限后重试。') } finally { setSaving(false) }
   }
-  return <div className="page-wrap settings-page"><div className="page-title settings-title"><h1>设置</h1></div><div className="settings-layout"><nav className="settings-nav" aria-label="设置目录"><Button variant="ghost" type="button" onClick={() => document.getElementById('settings-appearance')?.scrollIntoView({ block: 'start' })}>外观</Button><Button variant="ghost" type="button" onClick={() => document.getElementById('settings-creation')?.scrollIntoView({ block: 'start' })}>创作目录</Button><Button variant="ghost" type="button" onClick={() => document.getElementById('settings-model')?.scrollIntoView({ block: 'start' })}>模型服务</Button><Button variant="ghost" type="button" onClick={() => document.getElementById('settings-image')?.scrollIntoView({ block: 'start' })}>图片生成服务</Button><Button variant="ghost" type="button" onClick={() => document.getElementById('settings-update')?.scrollIntoView({ block: 'start' })}>软件更新</Button></nav><div><form className="settings-form" onSubmit={save}>
+  return <div className="page-wrap settings-page"><div className="page-title settings-title"><h1>设置</h1></div><div className="settings-layout"><nav className="settings-nav" aria-label="设置目录"><Button variant="ghost" type="button" onClick={() => document.getElementById('settings-appearance')?.scrollIntoView({ block: 'start' })}>外观</Button><Button variant="ghost" type="button" onClick={() => document.getElementById('settings-creation')?.scrollIntoView({ block: 'start' })}>创作目录</Button><Button variant="ghost" type="button" onClick={() => document.getElementById('settings-model')?.scrollIntoView({ block: 'start' })}>模型服务</Button><Button variant="ghost" type="button" onClick={() => document.getElementById('settings-image')?.scrollIntoView({ block: 'start' })}>图片生成服务</Button><Button variant="ghost" type="button" onClick={() => document.getElementById('settings-voice')?.scrollIntoView({ block: 'start' })}>语音服务</Button><Button variant="ghost" type="button" onClick={() => document.getElementById('settings-update')?.scrollIntoView({ block: 'start' })}>软件更新</Button></nav><div><form className="settings-form" onSubmit={save}>
     <fieldset disabled={loading || saving || fetchingModels} className="settings-fields">
 
     <Card asChild><section className="form-card" id="settings-appearance">
@@ -121,6 +122,6 @@ export function Settings({ onSaved, softwareUpdates }: { onSaved: (directoryChan
           : error ? <span className="settings-error" role="alert">{error}</span>
           : null}
       </div>
-      <Button type="submit" className="primary-button" disabled={loading || saving || fetchingModels || Boolean(error && !window.settingsApi)}>{saving ? '处理中…' : '保存设置'}</Button></div></form><div className="mt-3">{softwareUpdates}</div></div></div></div>
+      <Button type="submit" className="primary-button" disabled={loading || saving || fetchingModels || Boolean(error && !window.settingsApi)}>{saving ? '处理中…' : '保存设置'}</Button></div></form><div className="mt-3"><VoiceSettings/></div><div className="mt-3">{softwareUpdates}</div></div></div></div>
 }
 

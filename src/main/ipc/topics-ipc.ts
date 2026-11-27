@@ -42,7 +42,7 @@ export function registerTopics(): void {
     const root = await getDraftsDirectory()
     await topicQueue.load(root)
     track(event.sender)
-    await startBatchArticles(root, { batchId: input.batchId, indexes: input.indexes, platforms: input.platforms, imageStyle: input.imageStyle, generateImages: input.generateImages, folderId: input.folderId }, { update: updateTopicWorkspace, start: (dir, options) => articleQueue.start(dir, options), assertTitle: assertAvailableArticleTitle,
+    return await startBatchArticles(root, { batchId: input.batchId, indexes: input.indexes, platforms: input.platforms, imageStyle: input.imageStyle, generateImages: input.generateImages, folderId: input.folderId }, { update: updateTopicWorkspace, loadRuns: dir => articleQueue.load(dir), start: (dir, options) => articleQueue.start(dir, options), assertTitle: assertAvailableArticleTitle,
       ensureFolder: async (dir, batchId, parentId, name) => { const index = await changeWorkspaceIndex(dir, { type: 'ensureTopicFolder', batchId, parentId, name }); const id = index.topicFolders?.[batchId]; if (!id) throw new Error('选题操作：无法创建选题文件夹。'); return id },
       assignFolder: async (dir, id, folderId) => { try { await changeWorkspaceIndex(dir, { type: 'moveDraft', draftId: id, folderId }) } catch (error) { const fallback = await ensureWorkspaceIndex(dir); if (fallback.defaultFolderId) await changeWorkspaceIndex(dir, { type: 'moveDraft', draftId: id, folderId: fallback.defaultFolderId }); throw error } } })
   }))

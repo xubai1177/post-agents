@@ -1,0 +1,28 @@
+const { app, BrowserWindow, dialog } = require('electron')
+const assert = require('node:assert/strict')
+app.on('window-all-closed', () => {})
+app.whenReady().then(async () => {
+  try {
+    const api = require(process.argv[2])
+    dialog.showMessageBox = async () => ({ response: 0, checkboxChecked: false })
+    await api.openVideoWindow('/tmp/workspace-one')
+    const video = BrowserWindow.getAllWindows().find(window => api.isVideoWindow(window.webContents))
+    assert.ok(video)
+    assert.equal(api.videoWorkspace(video.webContents), '/tmp/workspace-one')
+    await api.openVideoWindow('/tmp/workspace-two')
+    assert.equal(BrowserWindow.getAllWindows().filter(window => api.isVideoWindow(window.webContents)).length, 1)
+    assert.equal(api.videoWorkspace(video.webContents), '/tmp/workspace-one')
+    api.setVideoWindowState(video.webContents, true, false)
+    assert.equal(api.videoWindowIsBusy(), true)
+    video.close()
+    assert.equal(video.isDestroyed(), false)
+    api.setVideoWindowState(video.webContents, false, false)
+    const closed = new Promise(resolve => video.once('closed', resolve))
+    video.close()
+    await closed
+    assert.equal(video.isDestroyed(), true)
+    assert.equal(api.videoWindowIsBusy(), false)
+    console.log('独立白板窗口复用、工作区绑定和任务期间关闭保护通过。')
+    app.exit(0)
+  } catch (error) { console.error(error); app.exit(1) }
+})

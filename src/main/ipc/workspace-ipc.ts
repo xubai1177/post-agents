@@ -7,7 +7,7 @@ import { settingsForBackup, switchWorkspace, restoreWorkspaceSettings, listWorks
 import { isImageStyle } from '../../shared/image-styles'
 import { isWorkspaceNodeId, type DeleteNodesPlan, type WorkspaceChange } from '../../shared/workspace'
 import { getDraftsDirectory } from '../features/settings/settings'
-import { changeWorkspaceIndex, ensureWorkspaceIndex, deleteWorkspaceArticle, deleteWorkspaceNodes, previewDeleteNodes, readWorkspaceIndex } from '../features/workspace/workspace-index'
+import { changeWorkspaceIndex, ensureWorkspaceIndex, deleteWorkspaceArticle, deleteWorkspaceNodes, previewDeleteNodes } from '../features/workspace/workspace-index'
 import { respond } from './security'
 import { articleQueue } from '../composition'
 

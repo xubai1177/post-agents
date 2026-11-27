@@ -1,0 +1,115 @@
+// Run with Electron and a bundled project module; all data stays in a temporary workspace.
+const { app, nativeImage } = require('electron')
+const { mkdtemp, mkdir, readFile, writeFile, rename, rm, unlink } = require('node:fs/promises')
+const { join } = require('node:path')
+const { tmpdir } = require('node:os')
+const assert = require('node:assert/strict')
+app.setAppPath(process.cwd())
+app.on('window-all-closed', () => {})
+app.whenReady().then(async () => {
+  const root = await mkdtemp(join(tmpdir(), 'whiteboard-test-'))
+  try {
+    const api = require(process.argv[2])
+    const image = nativeImage.createFromPath(join(process.cwd(), 'src/renderer/public/icon.png')).toPNG()
+    const scenes = ['一', '二', '三'].map(name => ({ focus: name, layout: 'list', beats: ['甲', '乙'].map(beat => ({ narration: `场景${name}节拍${beat}。`, sticker: `物件${name}-${beat}`, elements: [{ type: 'arrow', text: name }] })) }))
+    scenes[0].layout = 'diagram'
+    scenes[0].relations = [{ from: { beat: 0, element: 0 }, to: { beat: 1, element: 0 }, label: '影响', color: 'green', style: 'dashed' }]
+    let project = await api.createProject(root, '示例')
+    project = await api.updatePlan(root, project.id, { title: '示例视频', scenes })
+    const draft = { title: '未保存标题', scenes: scenes.map((scene, i) => i === 0 ? { ...scene, focus: '未保存画面' } : scene) }
+    const placeholderPreview = await api.previewScene(root, project.id, 0, draft)
+    assert.ok(placeholderPreview.image.startsWith('data:image/png;base64,'))
+    assert.ok(placeholderPreview.warnings.some(warning => warning.includes('占位图')))
+    assert.equal((await api.listProjects(root)).find(item => item.id === project.id).plan.scenes[0].focus, '一', '预览不能保存草稿')
+    await assert.rejects(api.previewScene(root, project.id, 0, { ...draft, scenes: [] }), /场景/)
+    let failed = false
+    const attempts = []
+    const deps = { settings: async () => ({ draftsDirectory: root, apiUrl: 'https://example.test', model: 'mock', apiKey: 'test' }), request: async (_config, prompt, usage) => {
+      const name = scenes.flatMap(item => item.beats.map(beat => beat.sticker)).find(item => prompt.includes(item))
+      attempts.push(name); usage?.({ input_tokens: 1, output_tokens: 2, total_tokens: 3, image_units: 1.5 })
+      if (name === '物件二-甲' && !failed) { failed = true; throw Error('mock failure') }
+      return { bytes: image, usage: { input_tokens: 1, output_tokens: 2, total_tokens: 3, image_units: 1.5 } }
+    } }
+    project = await api.generateMissingStickers(root, project.id, deps)
+    assert.deepEqual(attempts, ['物件一-甲', '物件一-乙', '物件二-甲', '物件二-乙', '物件三-甲', '物件三-乙'])
+    assert.equal(project.stickers.length, 5)
+    assert.match(project.error, /2/)
+    assert.deepEqual(project.imageUsage.map(item => item.status), ['成功', '成功', '失败', '成功', '成功', '成功'])
+    project = await api.generateMissingStickers(root, project.id, deps)
+    assert.deepEqual(attempts, ['物件一-甲', '物件一-乙', '物件二-甲', '物件二-乙', '物件三-甲', '物件三-乙', '物件二-甲'])
+    assert.equal(project.stickers.length, 6)
+    assert.equal(project.error, null)
+    assert.equal(project.imageUsage.length, 7)
+    const localResult = await api.renderProject(root, project.id, { mode: 'local', speed: 1 }, phase => {
+      if (phase.phase === 'voice') api.cancelRender(project.id)
+    })
+    assert.equal(localResult.renderStatus, '中断', '本地配音应进入生成流程而不是要求云端配置')
+    await assert.rejects(api.renderProject(root, project.id, { mode: 'cloud', speaker: 'speaker', speed: 1 }, () => {}), /请选择语音配置/)
+    const scenePreview = await api.previewScene(root, project.id, 0)
+    assert.ok(scenePreview.image.startsWith('data:image/png;base64,'))
+    const noLinks = scenes.map((scene, index) => index === 0 ? { ...scene, relations: [] } : scene)
+    project = await api.updatePlan(root, project.id, { title: '示例视频', scenes: noLinks })
+    const withoutLinks = await api.previewScene(root, project.id, 0)
+    assert.notEqual(scenePreview.image, withoutLinks.image, '预览画面应反映已保存的关系连线')
+    const moved = noLinks.map((scene, i) => i === 0 ? { ...scene, beats: scene.beats.map((beat, j) => j === 0 ? { ...beat, stickerPosition: { x: 5, y: 70, width: 15, height: 20 } } : beat) } : scene)
+    project = await api.updatePlan(root, project.id, { title: '示例视频', scenes: moved })
+    assert.notEqual((await api.previewScene(root, project.id, 0)).image, withoutLinks.image, '静帧预览应反映贴纸自定义位置')
+    assert.deepEqual((await api.listProjects(root)).find(item => item.id === project.id).plan.scenes[0].beats[0].stickerPosition, { x: 5, y: 70, width: 15, height: 20 })
+    const conflicting = noLinks.map((scene, i) => i === 0 ? { ...scene, beats: scene.beats.map((beat, j) => j === 0 ? { ...beat, stickerPosition: { x: 10, y: 20, width: 30, height: 30 }, elements: beat.elements.map(element => ({ ...element, x: 10, y: 20, width: 30, height: 30 })) } : beat) } : scene)
+    project = await api.updatePlan(root, project.id, { title: '示例视频', scenes: conflicting })
+    const conflictPreview = await api.previewScene(root, project.id, 0)
+    assert.ok(conflictPreview.warnings.some(warning => warning.includes('贴纸') && warning.includes('重叠')), '固定位置冲突需在预览中明确报告')
+    project = await api.updatePlan(root, project.id, { title: '示例视频', scenes })
+    await assert.rejects(api.previewScene(root, project.id, 99), /场景无效/)
+    assert.equal(project.imageUsage[0].extraUnits.image_units, 1.5)
+    assert.ok((await api.stickerData(root, project.id, 1, 0)).startsWith('data:image/png;base64,'))
+    const noSticker = scenes.map((scene, i) => i === 2 ? { ...scene, beats: scene.beats.map(beat => ({ ...beat, sticker: '' })) } : scene)
+    project = await api.updatePlan(root, project.id, { title: '示例视频', scenes: noSticker })
+    assert.equal(project.stickers.length, 6, '不使用贴纸时保留已有素材记录')
+    assert.ok((await api.previewScene(root, project.id, 2)).image.startsWith('data:image/png;base64,'))
+    project = await api.generateMissingStickers(root, project.id, deps)
+    assert.equal(attempts.length, 7, '无贴纸的节拍不应调用图片模型')
+    project = await api.updatePlan(root, project.id, { title: '示例视频', scenes })
+    await assert.rejects(api.stickerData(root, project.id, 1, -1))
+    await assert.rejects(api.videoFile(root, '../outside'))
+    const lost = project.stickers.find(item => item.scene === 0 && item.beat === 1)
+    await unlink(join(await api.projectDirectory(root, project.id), lost.filename))
+    project = await api.generateMissingStickers(root, project.id, deps)
+    assert.equal(attempts.at(-1), '物件一-乙')
+    assert.equal(attempts.length, 8)
+    assert.equal(project.stickers.length, 6)
+    const dir = await api.projectDirectory(root, project.id)
+    const legacy = 'render-11111111-1111-4111-8111-111111111111', newer = 'render-22222222-2222-4222-8222-222222222222'
+    for (const video of [legacy, newer]) {
+      await mkdir(join(dir, video))
+      await writeFile(join(dir, video, '视频.mp4'), 'test video')
+      await writeFile(join(dir, video, '字幕.srt'), 'subtitle')
+    }
+    const metadata = JSON.parse(await readFile(join(dir, 'project.json'), 'utf8'))
+    metadata.lastVideo = legacy
+    delete metadata.videos
+    await writeFile(join(dir, 'project.json'), JSON.stringify(metadata))
+    let history = (await api.listProjects(root)).find(item => item.id === project.id)
+    assert.equal(history.videos.length, 1)
+    assert.equal(history.videos[0].id, legacy)
+    assert.equal(history.videos[0].createdAt, null)
+    assert.equal(await api.videoFile(root, project.id), join(dir, legacy, '视频.mp4'))
+    metadata.videos = [{ id: newer, title: '新视频', createdAt: '2026-11-27T12:00:00.000Z' }, ...history.videos]
+    metadata.lastVideo = newer
+    await writeFile(join(dir, 'project.json'), JSON.stringify(metadata))
+    await assert.rejects(api.videoFile(root, project.id, '../outside'))
+    await assert.rejects(api.deleteVideo(root, project.id, newer, async () => { throw Error('trash failed') }), /废纸篓/)
+    assert.equal((await api.listProjects(root)).find(item => item.id === project.id).videos.length, 2)
+    history = await api.deleteVideo(root, project.id, newer, path => rename(path, join(root, 'trashed.mp4')))
+    assert.equal(history.lastVideo, legacy)
+    assert.deepEqual(history.videos.map(item => item.id), [legacy])
+    assert.equal(await readFile(join(dir, newer, '字幕.srt'), 'utf8'), 'subtitle')
+    assert.equal(await api.videoFile(root, project.id), join(dir, legacy, '视频.mp4'))
+    assert.equal((await api.listProjects(root)).find(item => item.id === project.id).videos.length, 1)
+    process.stdout.write('白板贴纸失败恢复与重复计费保护通过。\n')
+    await rm(root, { recursive: true, force: true }); app.exit(0)
+  } catch (error) {
+    process.stderr.write(`白板工程测试失败：${error.message}\n`)
+    await rm(root, { recursive: true, force: true }); app.exit(1)
+  }
+})

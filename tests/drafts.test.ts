@@ -1254,6 +1254,7 @@ test('批量文章交给后台队列并根据文章任务展示最新状态', as
   let data: import('../src/shared/topics').TopicWorkspace = { version: 1, batches: [{ id: 'batch', createdAt: '2026-01-01', batch: { request, candidates: [{ title: '主题一', angle: '角度', reason: '', platforms: [], sourceIndexes: [], pending: [] }, { title: '主题二', angle: '', reason: '', platforms: [], sourceIndexes: [], pending: [] }], sources: [], skipped: false } }], tasks: [] }
   const started: import('../src/shared/drafts').StartArticleRequest[] = []
   await startBatchArticles('root', { batchId: 'batch', indexes: [0, 1], platforms: ['小红书'], imageStyle: 'flat', generateImages: true, folderId: 'parent' }, {
+    loadRuns: async () => [],
     ensureFolder: async () => 'group', assignFolder: async () => {},
     update: async (_root, change) => { data = change(data); return data }, assertTitle: async (_root, title) => { if (title === '主题二') throw new Error('已有同名主题，请更换主题名称。') },
     start: async (_root, options) => { started.push(options); return { id: options.request.title, title: options.request.title, platforms: options.request.platforms } }
@@ -1272,12 +1273,30 @@ test('批量文章目录关联失败时保留文章并显示警告', async () =>
   const request = { direction: '选题', audience: '', platforms: ['小红书' as const] }
   let data: import('../src/shared/topics').TopicWorkspace = { version: 1, batches: [{ id: 'batch', createdAt: '2026-01-01', batch: { request, candidates: [{ title: '文章', angle: '', reason: '', platforms: [], sourceIndexes: [], pending: [] }], sources: [], skipped: false } }], tasks: [] }
   await startBatchArticles('root', { batchId: 'batch', indexes: [0], platforms: ['小红书'], imageStyle: 'flat', generateImages: false, folderId: 'parent' }, {
+    loadRuns: async () => [],
     update: async (_root, change) => { data = change(data); return data }, assertTitle: async () => {}, ensureFolder: async () => 'group',
     start: async () => ({ id: '文章', title: '文章', platforms: ['小红书'] }), assignFolder: async () => { throw new Error('目录不可用') }
   })
   assert.equal(data.tasks[0].draftId, '文章'); assert.match(data.tasks[0].message ?? '', /手动移动/)
   const run = { id: '文章', request: { title: '文章', audience: '', platforms: ['小红书' as const], research: 'online' as const }, versions: {}, status: 'done' as const, imageStyle: 'flat' as const, generateImages: false }
   assert.match(taskWithArticleRun(data.tasks[0], [run]).message ?? '', /手动移动/)
+})
+
+test('批量创建跳过已完成和进行中的选题，仍处理未加入及失败的选题', async () => {
+  const { startBatchArticles } = await import('../src/main/features/topics/batch-articles')
+  const request = { direction: '方向', audience: '', platforms: ['小红书' as const], research: 'online' as const }
+  const candidates = ['已完成', '进行中', '未加入', '失败'].map(title => ({ title, angle: '', reason: '', platforms: [], sourceIndexes: [], pending: [] }))
+  let data: import('../src/shared/topics').TopicWorkspace = { version: 1, batches: [{ id: 'batch', createdAt: '2026-01-01', batch: { request, candidates, sources: [], skipped: false } }], tasks: [
+    { id: 'done', batchId: 'batch', index: 0, title: '已完成', status: 'running', draftId: 'done' },
+    { id: 'active', batchId: 'batch', index: 1, title: '进行中', status: 'running', draftId: 'active' },
+    { id: 'failed', batchId: 'batch', index: 3, title: '失败', status: 'running', draftId: 'failed' }
+  ] }
+  const runs = (['done', 'active', 'failed'] as const).map(id => ({ id, request, versions: {}, status: id === 'active' ? 'running' as const : id === 'done' ? 'done' as const : 'failed' as const, imageStyle: 'flat' as const, generateImages: false }))
+  const started: string[] = []
+  const deps = { loadRuns: async () => runs, update: async (_root: string, change: (value: typeof data) => typeof data) => { data = change(data); return data }, ensureFolder: async () => 'group', assignFolder: async () => {}, assertTitle: async () => {}, start: async (_root: string, options: import('../src/shared/drafts').StartArticleRequest) => { started.push(options.request.title); return { id: options.request.title, title: options.request.title, platforms: options.request.platforms } } }
+  assert.deepEqual(await startBatchArticles('root', { batchId: 'batch', indexes: [0, 1, 2, 3], platforms: ['小红书'], imageStyle: 'flat', generateImages: false, folderId: 'parent' }, deps), { started: 2, skipped: 2, failed: 0 })
+  assert.deepEqual(started, ['未加入', '失败'])
+  assert.deepEqual(await startBatchArticles('root', { batchId: 'batch', indexes: [0, 1], platforms: ['小红书'], imageStyle: 'flat', generateImages: false, folderId: 'parent' }, deps), { started: 0, skipped: 2, failed: 0 })
 })
 
 test('平台链接校验内置平台、自定义名称和安全的网页地址', async () => {

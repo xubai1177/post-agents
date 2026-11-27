@@ -1,5 +1,6 @@
 /// <reference types="vite/client" />
 
+import type { CanvasWindowApi, VideoWindowApi, WhiteboardApi } from '../../shared/whiteboard'
 import type { DiscoveryApi } from '../../shared/discovery'
 import type { SettingsApi } from '../../shared/settings'
 import type { DraftsApi } from '../../shared/drafts'
@@ -9,5 +10,5 @@ import type { UpdatesApi } from '../../shared/updates'
 import type { WorkspaceApi } from '../../shared/workspace'
 
 declare global {
-  interface Window { discoveryApi: DiscoveryApi; settingsApi: SettingsApi; draftsApi: DraftsApi; imagesApi: ImagesApi; topicsApi: TopicsApi; workspaceApi: WorkspaceApi; updatesApi: UpdatesApi }
+  interface Window { canvasApi: CanvasWindowApi; videoWindowApi: VideoWindowApi; whiteboardApi: WhiteboardApi; discoveryApi: DiscoveryApi; settingsApi: SettingsApi; draftsApi: DraftsApi; imagesApi: ImagesApi; topicsApi: TopicsApi; workspaceApi: WorkspaceApi; updatesApi: UpdatesApi }
 }

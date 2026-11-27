@@ -58,7 +58,7 @@ export function UpdateDialog({ updates }: { updates: Controls }) {
   const { state } = updates
   if (!state?.version) return null
   return <Dialog open={updates.open} onOpenChange={updates.setOpen}>
-    <DialogContent className="flex max-h-[calc(100vh-2rem)] flex-col gap-0 overflow-hidden rounded-xl p-0 sm:max-w-[460px]" showCloseButton={false}>
+    <DialogContent className="update-dialog flex max-h-[calc(100vh-2rem)] flex-col gap-0 overflow-hidden rounded-xl p-0 sm:max-w-[460px]" showCloseButton={false}>
       <div className="flex items-center gap-3 px-6 pt-6 pb-5">
         <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary"><ArrowDownToLine size={20} aria-hidden="true" /></div>
         <div className="min-w-0 space-y-2"><DialogTitle className="text-base leading-5">发现新版本</DialogTitle>

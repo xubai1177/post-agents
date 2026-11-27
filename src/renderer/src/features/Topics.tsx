@@ -101,7 +101,9 @@ export function Topics({ onChoose, onStatus, onBatchBusy, active, availablePlatf
     try {
       const result = await window.topicsApi.startBatch({ batchId: record.id, indexes: selected, platforms: chosen, imageStyle: style, generateImages: images, folderId: batchFolderId })
       if (!result.ok) { setBatchError(result.error); return }
-      setDrawer(null); setSelected([]); showMessage('文章任务已加入队列。')
+      const { started, skipped, failed } = result.value
+      setDrawer(null); setSelected([])
+      showMessage([started ? `${started} 个文章任务已加入队列` : '', skipped ? `跳过 ${skipped} 个已完成或已有进行中任务的选题` : '', failed ? `${failed} 个创建失败，请查看任务状态` : ''].filter(Boolean).join('；') + '。')
       await refreshRecords()
     } catch { setBatchError('无法创建文章任务，请检查工作空间。') }
     finally { setBatchBusy(false); onBatchBusy(false) }

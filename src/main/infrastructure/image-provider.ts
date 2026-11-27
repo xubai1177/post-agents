@@ -22,7 +22,7 @@ async function download(urlString: string): Promise<Buffer> {
     req.on('error', reject); req.end()
   })
 }
-export async function requestImage(config: { apiUrl: string; model: string; apiKey: string }, prompt: string): Promise<Buffer> {
+export async function requestImageWithUsage(config: { apiUrl: string; model: string; apiKey: string }, prompt: string, onUsage?: (usage: unknown) => void): Promise<{ bytes: Buffer; usage: unknown }> {
   const base = new URL(config.apiUrl.endsWith('/') ? config.apiUrl : `${config.apiUrl}/`)
   if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password || base.search || base.hash) throw new Error('图片服务地址无效。')
   const endpoint = new URL('images/generations', base)
@@ -32,8 +32,11 @@ export async function requestImage(config: { apiUrl: string; model: string; apiK
   while (true) { const { done, value } = await reader.read(); if (done) break; length += value.length; if (length > maxBytes * 2) { await reader.cancel(); throw new Error('图片响应过大。') }; chunks.push(value) }
   const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'))
   if (!parsed || typeof parsed !== 'object' || !('data' in parsed) || !Array.isArray(parsed.data) || !parsed.data[0] || typeof parsed.data[0] !== 'object') throw new Error('图片服务响应无效。')
+  onUsage?.('usage' in parsed ? parsed.usage : null)
   const entry: Record<string, unknown> = parsed.data[0]
-  if (typeof entry.b64_json === 'string') { if (entry.b64_json.length > maxBytes * 1.4 || !/^[A-Za-z0-9+/]*={0,2}$/.test(entry.b64_json)) throw new Error('图片数据无效。'); return Buffer.from(entry.b64_json, 'base64') }
-  if (typeof entry.url === 'string' && entry.url.length < 8192) return download(entry.url)
+  if (typeof entry.b64_json === 'string') { if (entry.b64_json.length > maxBytes * 1.4 || !/^[A-Za-z0-9+/]*={0,2}$/.test(entry.b64_json)) throw new Error('图片数据无效。'); return { bytes: Buffer.from(entry.b64_json, 'base64'), usage: 'usage' in parsed ? parsed.usage : null } }
+  if (typeof entry.url === 'string' && entry.url.length < 8192) return { bytes: await download(entry.url), usage: 'usage' in parsed ? parsed.usage : null }
   throw new Error('图片服务未返回图片。')
 }
+
+export async function requestImage(config: { apiUrl: string; model: string; apiKey: string }, prompt: string): Promise<Buffer> { return (await requestImageWithUsage(config, prompt)).bytes }

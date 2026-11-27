@@ -9,7 +9,25 @@ files:
   - package.json
   - '!**/.env*'
 asar: true
+beforePack: scripts/verify-ffmpeg-arch.cjs
 mac:
+  extraResources:
+    - from: licenses/whiteboard
+      to: licenses/whiteboard
+    - from: scripts/whiteboard-svg-render.html
+      to: whiteboard-svg-render.html
+    - from: scripts/whiteboard-rough.js
+      to: whiteboard-rough.js
+    - from: scripts/whiteboard-font.ttf
+      to: whiteboard-font.ttf
+    - from: .cache/ffmpeg/ffmpeg
+      to: ffmpeg
+    - from: .cache/ffmpeg/source.tar.xz
+      to: licenses/whiteboard/ffmpeg-source.tar.xz
+    - from: .cache/ffmpeg/COPYING.LGPLv2.1
+      to: licenses/whiteboard/FFMPEG-LGPL.txt
+    - from: .cache/ffmpeg/BUILD.txt
+      to: licenses/whiteboard/FFMPEG-BUILD.txt
   icon: src/renderer/public/icon.png
   publish:
     provider: generic
