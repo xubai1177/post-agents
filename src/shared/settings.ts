@@ -1,3 +1,4 @@
+import type { ImageStyleDefinition, PlatformImageStyles } from './image-styles'
 import type { PlatformLink } from './platform-links'
 import type { PlatformPrompts } from './platform-prompts'
 
@@ -36,6 +37,7 @@ export interface AppSettings {
   platformPrompts: PlatformPrompts
   titlePrompts: PlatformPrompts
   platformLinks: PlatformLink[]
+  platformImageStyles: PlatformImageStyles
 }
 export type KeyChange = { action: 'keep' } | { action: 'replace'; value: string } | { action: 'clear' }
 export interface SettingsUpdate {
@@ -61,6 +63,8 @@ export interface SettingsApi {
   save: (settings: SettingsUpdate) => Promise<Result<AppSettings>>
   listModels: (request: { apiUrl: string; service: 'text' | 'image'; apiKey: KeyChange }) => Promise<Result<string[]>>
   chooseDirectory: () => Promise<Result<string | null>>
-  savePlatformConfig: (config: { platformLinks: PlatformLink[]; platformPrompts: PlatformPrompts; titlePrompts: PlatformPrompts }) => Promise<Result<AppSettings>>
+  savePlatformConfig: (config: { platformLinks: PlatformLink[]; platformPrompts: PlatformPrompts; titlePrompts: PlatformPrompts; platformImageStyles: PlatformImageStyles }) => Promise<Result<AppSettings>>
+  saveImageStylePreview: (request: { platform: import('./drafts').Platform; style: ImageStyleDefinition }) => Promise<Result<void>>
+  testImageStyle: (request: { platform: import('./drafts').Platform; prompt: string }) => Promise<Result<string>>
   openPlatform: (name: string) => Promise<Result<void>>
 }

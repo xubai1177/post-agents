@@ -3,7 +3,7 @@ import { readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { platforms, type ArticleRun, type CreateRequest, type CreateResult, type Draft, type Platform, type StartArticleRequest, type PromptSnapshot } from '../../../shared/drafts'
 import { isPlatformPrompts } from '../../../shared/platform-prompts'
-import { isImageStyle } from '../../../shared/image-styles'
+import { isImageStyle, isPlatformStyleSelections } from '../../../shared/image-styles'
 import type { GenerationProgress } from '../../../shared/research'
 import { ResearchUnavailableError } from '../../errors'
 import { listDrafts, readDraft } from '../drafts/draft-store'
@@ -20,7 +20,7 @@ type Dependencies = {
 function validRun(value: unknown, id: string): value is ArticleRun {
   if (!value || typeof value !== 'object') return false
   const r = value as ArticleRun, q = r.request
-  return (r.promptSnapshot === undefined || (isPlatformPrompts(r.promptSnapshot.platformPrompts) && isPlatformPrompts(r.promptSnapshot.titlePrompts))) && r.id === id && !!q && typeof q.title === 'string' && q.title.length <= 100 && typeof q.audience === 'string' && q.audience.length <= 500 && (q.angle === undefined || (typeof q.angle === 'string' && q.angle.length <= 2000)) && (q.research === 'online' || q.research === 'skip') && Array.isArray(q.platforms) && q.platforms.length > 0 && q.platforms.every(p => platforms.includes(p)) && new Set(q.platforms).size === q.platforms.length && !!r.versions && typeof r.versions === 'object' && q.platforms.every(p => typeof r.versions[p] === 'string' && /^[a-f0-9]{64}$/.test(r.versions[p]!)) && ['queued', 'running', 'waiting', 'failed', 'interrupted', 'done'].includes(r.status) && (r.phase === undefined || ['research', 'plan', 'write', 'review', 'save', 'images'].includes(r.phase)) && (r.message === undefined || (typeof r.message === 'string' && r.message.length <= 10000)) && (r.imageProgress === undefined || (typeof r.imageProgress === 'string' && r.imageProgress.length <= 200)) && isImageStyle(r.imageStyle) && typeof r.generateImages === 'boolean'
+  return (r.promptSnapshot === undefined || (isPlatformPrompts(r.promptSnapshot.platformPrompts) && isPlatformPrompts(r.promptSnapshot.titlePrompts))) && r.id === id && !!q && typeof q.title === 'string' && q.title.length <= 100 && typeof q.audience === 'string' && q.audience.length <= 500 && (q.angle === undefined || (typeof q.angle === 'string' && q.angle.length <= 2000)) && (q.research === 'online' || q.research === 'skip') && Array.isArray(q.platforms) && q.platforms.length > 0 && q.platforms.every(p => platforms.includes(p)) && new Set(q.platforms).size === q.platforms.length && !!r.versions && typeof r.versions === 'object' && q.platforms.every(p => typeof r.versions[p] === 'string' && /^[a-f0-9]{64}$/.test(r.versions[p]!)) && ['queued', 'running', 'waiting', 'failed', 'interrupted', 'done'].includes(r.status) && (r.phase === undefined || ['research', 'plan', 'write', 'review', 'save', 'images'].includes(r.phase)) && (r.message === undefined || (typeof r.message === 'string' && r.message.length <= 10000)) && (r.imageProgress === undefined || (typeof r.imageProgress === 'string' && r.imageProgress.length <= 200)) && isImageStyle(r.imageStyle) && (r.imageStylesByPlatform === undefined || isPlatformStyleSelections(r.imageStylesByPlatform)) && typeof r.generateImages === 'boolean'
 }
 export class ArticleQueue {
   private pending: { root: string; id: string }[] = []
@@ -75,7 +75,7 @@ export class ArticleQueue {
     this.preparing.add(key)
     try {
       for (const platform of draft.platforms) versions[platform] = (await readDraft(root, draft.id, platform)).version
-      const run: ArticleRun = { id: draft.id, ...(promptSnapshot ? { promptSnapshot } : {}), request: { ...options.request, platforms: draft.platforms }, versions, status: 'queued', imageStyle: options.imageStyle, generateImages: options.generateImages, ...(created.failures.length ? { message: `部分平台创建失败：${created.failures.map(item => item.platform).join('、')}` } : {}) }
+      const run: ArticleRun = { id: draft.id, ...(promptSnapshot ? { promptSnapshot } : {}), request: { ...options.request, platforms: draft.platforms }, versions, status: 'queued', imageStyle: options.imageStyle, ...(options.imageStylesByPlatform && { imageStylesByPlatform: options.imageStylesByPlatform }), generateImages: options.generateImages, ...(created.failures.length ? { message: `部分平台创建失败：${created.failures.map(item => item.platform).join('、')}` } : {}) }
       try { await this.write(root, run) } catch { throw new Error('文章操作：文章已创建，但生成任务保存失败，请检查工作空间。') }
       this.pending.push({ root, id: draft.id }); this.pump()
       return draft

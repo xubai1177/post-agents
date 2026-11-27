@@ -1,3 +1,4 @@
+import { isPlatformImageStyles, type PlatformImageStyles } from '../../../shared/image-styles'
 import { isPlatformPrompts, type PlatformPrompts } from '../../../shared/platform-prompts'
 import { constants } from 'node:fs'
 import { createCipheriv, createDecipheriv, randomBytes, scrypt as scryptCallback } from 'node:crypto'
@@ -8,7 +9,7 @@ import { basename, join, relative, sep } from 'node:path'
 const scrypt = promisify(scryptCallback)
 const magic = Buffer.from('POSTAGENTS-BACKUP-1\n')
 const plainMagic = Buffer.from('POSTAGENTS-BACKUP-PLAIN-1\n')
-export interface BackupSettings { credentialsIncluded?: boolean; apiUrl: string; model: string; apiKey: string; imageService: 'shared' | 'custom'; imageApiUrl: string; imageModel: string; imageApiKey: string; platformPrompts?: PlatformPrompts; titlePrompts?: PlatformPrompts }
+export interface BackupSettings { imageStyleDefaultsVersion?: 1 | 2; platformImageStyles?: PlatformImageStyles; credentialsIncluded?: boolean; apiUrl: string; model: string; apiKey: string; imageService: 'shared' | 'custom'; imageApiUrl: string; imageModel: string; imageApiKey: string; platformPrompts?: PlatformPrompts; titlePrompts?: PlatformPrompts }
 interface Entry { path: string; data?: string }
 interface Snapshot { version: 1; settings: BackupSettings; entries: Entry[] }
 function validName(part: string): boolean { return !!part && part !== '.' && part !== '..' && !/[\\/\0]/.test(part) }
@@ -58,6 +59,8 @@ export async function decodeBackup(bytes: Buffer, password: string): Promise<Sna
   if (bytes.subarray(0, plainMagic.length).equals(plainMagic) && (config.credentialsIncluded !== false || config.apiKey !== '' || config.imageApiKey !== '')) throw new Error('无密码备份的密钥设置无效。')
   for (const field of ['apiUrl', 'model', 'apiKey', 'imageApiUrl', 'imageModel', 'imageApiKey']) if (typeof config[field] !== 'string' || (config[field] as string).length > 8192 || (config[field] as string).includes('\0')) throw new Error('备份设置无效。')
   if (config.titlePrompts !== undefined && !isPlatformPrompts(config.titlePrompts)) throw new Error('备份设置无效。')
+  if (config.imageStyleDefaultsVersion !== undefined && config.imageStyleDefaultsVersion !== 1 && config.imageStyleDefaultsVersion !== 2) throw new Error('备份设置无效。')
+  if (config.platformImageStyles !== undefined && !isPlatformImageStyles(config.platformImageStyles)) throw new Error('备份设置无效。')
   if (config.platformPrompts !== undefined && !isPlatformPrompts(config.platformPrompts)) throw new Error('备份设置无效。')
   if (config.imageService !== 'shared' && config.imageService !== 'custom') throw new Error('备份设置无效。')
   const seen = new Set<string>()

@@ -1,6 +1,6 @@
 import type { Result } from './settings'
 import type { GenerationProgress, ResearchRecord } from './research'
-import type { ImageStyle } from './image-styles'
+import type { ImageStyle, PlatformStyleSelections } from './image-styles'
 import type { PlatformPrompts } from './platform-prompts'
 export const platforms = ['小红书', '公众号', '抖音图文'] as const
 export type Platform = typeof platforms[number]
@@ -15,8 +15,8 @@ export interface GenerateTitlesRequest { id: string; platform: Platform; version
 export type TestPlatformPromptRequest = { kind: 'body'; platform: Platform; topic: string; rule: string } | { kind: 'title'; platform: Platform; content: string; rule: string }
 export type TestPlatformPromptResult = { kind: 'body'; content: string } | { kind: 'title'; titles: string[] }
 export interface PromptSnapshot { platformPrompts: PlatformPrompts; titlePrompts: PlatformPrompts }
-export interface ArticleRun { imageProgress?: string; promptSnapshot?: PromptSnapshot; id: string; request: CreateRequest; versions: Partial<Record<Platform, string>>; status: 'queued' | 'running' | 'waiting' | 'failed' | 'interrupted' | 'done'; phase?: GenerationProgress | 'images'; message?: string; imageStyle: ImageStyle; generateImages: boolean }
-export interface StartArticleRequest { request: CreateRequest; imageStyle: ImageStyle; generateImages: boolean; folderId: string | null }
+export interface ArticleRun { imageProgress?: string; promptSnapshot?: PromptSnapshot; id: string; request: CreateRequest; versions: Partial<Record<Platform, string>>; status: 'queued' | 'running' | 'waiting' | 'failed' | 'interrupted' | 'done'; phase?: GenerationProgress | 'images'; message?: string; imageStyle: ImageStyle; imageStylesByPlatform?: PlatformStyleSelections; generateImages: boolean }
+export interface StartArticleRequest { request: CreateRequest; imageStyle: ImageStyle; imageStylesByPlatform?: PlatformStyleSelections; generateImages: boolean; folderId: string | null }
 export interface DraftsApi {
   list: () => Promise<Result<Draft[]>>
   activity: () => Promise<Result<DraftActivity[]>>

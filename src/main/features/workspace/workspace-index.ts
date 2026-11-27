@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { lstat, mkdtemp, readFile, rename, rm, rmdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { isImageStyle } from '../../../shared/image-styles'
+import { isImageStyle, isPlatformStyleSelections } from '../../../shared/image-styles'
 import type { ImageStyle } from '../../../shared/image-styles'
 import { isWorkspaceNodeId, workspaceChildren, type DeleteArticleResult, type DeleteNodesPlan, type DeleteNodesResult, type WorkspaceChange, type WorkspaceFolder, type WorkspaceIndex, type WorkspaceNodeId } from '../../../shared/workspace'
 import { listDrafts, safeTitle } from '../drafts/draft-store'
@@ -49,6 +49,11 @@ function validate(value: unknown): WorkspaceIndex {
     if (!input.imageStyles || typeof input.imageStyles !== 'object' || Array.isArray(input.imageStyles)) return invalid()
     for (const [id, style] of Object.entries(input.imageStyles)) { if (!id || !isImageStyle(style)) return invalid(); imageStyles[id] = style }
   }
+  const platformImageStylesByArticle: NonNullable<WorkspaceIndex['platformImageStylesByArticle']> = Object.create(null)
+  if (input.platformImageStylesByArticle !== undefined) {
+    if (!input.platformImageStylesByArticle || typeof input.platformImageStylesByArticle !== 'object' || Array.isArray(input.platformImageStylesByArticle)) return invalid()
+    for (const [id, styles] of Object.entries(input.platformImageStylesByArticle)) { if (!id || !isPlatformStyleSelections(styles)) return invalid(); platformImageStylesByArticle[id] = styles }
+  }
   let order: WorkspaceNodeId[] | undefined
   if (input.order !== undefined) {
     if (!Array.isArray(input.order) || !input.order.every(isWorkspaceNodeId)) return invalid()
@@ -61,7 +66,7 @@ function validate(value: unknown): WorkspaceIndex {
     if (!input.topicFolders || typeof input.topicFolders !== 'object' || Array.isArray(input.topicFolders)) return invalid()
     for (const [key, value] of Object.entries(input.topicFolders)) { if (!folderId(key) || !folderId(value)) return invalid(); topicFolders[key] = value as string }
   }
-  return { version: 1, folders, assignments, titles, imageStyles, ...(order && { order }), ...(defaultFolderId && { defaultFolderId }), ...(generationFolderId && { generationFolderId }), ...(Object.keys(topicFolders).length && { topicFolders }) }
+  return { version: 1, folders, assignments, titles, imageStyles, ...(Object.keys(platformImageStylesByArticle).length && { platformImageStylesByArticle }), ...(order && { order }), ...(defaultFolderId && { defaultFolderId }), ...(generationFolderId && { generationFolderId }), ...(Object.keys(topicFolders).length && { topicFolders }) }
 }
 export async function readWorkspaceIndex(root: string): Promise<WorkspaceIndex> {
   if (!root) throw new Error('请先在设置中选择草稿目录。')
@@ -123,7 +128,7 @@ async function changeExclusive(root: string, change: WorkspaceChange): Promise<W
     }
     removeFromOrder(index, detached)
   }
-  else if (change.type === 'setImageStyle') { if (!isImageStyle(change.style) || !(await listDrafts(root)).some((item) => item.id === change.draftId)) throw new Error('文章或图片风格无效。'); index.imageStyles[change.draftId] = change.style }
+  else if (change.type === 'setImageStyle') { if (!isImageStyle(change.style) || !(await listDrafts(root)).some((item) => item.id === change.draftId)) throw new Error('文章或图片风格无效。'); if (change.platform !== undefined) { if (!['小红书', '公众号', '抖音图文'].includes(change.platform)) throw new Error('平台无效。'); index.platformImageStylesByArticle ??= {}; index.platformImageStylesByArticle[change.draftId] = { ...index.platformImageStylesByArticle[change.draftId], [change.platform]: change.style } } else index.imageStyles[change.draftId] = change.style }
   else if (change.type === 'renameArticle') {
     const drafts = await listDrafts(root), draft = drafts.find((item) => item.id === change.draftId)
     if (!draft) throw new Error('文章不存在。')
@@ -239,7 +244,7 @@ async function deleteArticleExclusive(root: string, id: string, deps: DeleteDepe
       detached.add(`article:${child}`)
     }
   }
-  delete index.assignments[id]; delete index.titles[id]; delete index.imageStyles[id]
+  delete index.assignments[id]; delete index.titles[id]; delete index.imageStyles[id]; if (index.platformImageStylesByArticle) delete index.platformImageStylesByArticle[id]
   removeFromOrder(index, detached)
   try { await deps.writeIndex(root, index) } catch {
     try { await restoreArticle() } catch (error) { throw new Error(`删除未完成：${error instanceof Error ? error.message : '请检查临时目录。'}`) }

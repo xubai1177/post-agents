@@ -8,7 +8,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { Button } from '@/components/ui/button'
 import { useEffect, useRef, useState } from 'react'
 import { platforms, type ArticleRun, type Draft, type Platform, type CreateRequest, type CreateResult } from '../../shared/drafts'
-import { defaultImageStyle, type ImageStyle } from '../../shared/image-styles'
+import { defaultImageStyle, type ImageStyle, type PlatformStyleSelections } from '../../shared/image-styles'
 import type { GenerationProgress } from '../../shared/research'
 import { Icon } from './components/Icon'
 import { useAppearance } from './features/appearance'
@@ -94,6 +94,7 @@ export default function App() {
     void window.workspaceApi.listWorkspaces().then(result => { if (active) { if (result.ok) setWorkspaces(result.value); else showMessage(result.error, true) } }).catch(() => { if (active) showMessage('无法读取工作区列表。', true) })
     return () => { active = false }
   }, [workspaceVersion])
+  const [platformArticleStyles, setPlatformArticleStyles] = useState<Record<string, PlatformStyleSelections>>({})
   const [articleStyles, setArticleStyles] = useState<Record<string, ImageStyle>>({})
   const [articleTitles, setArticleTitles] = useState<Record<string, string>>({})
   const [researchFailed, setResearchFailed] = useState(false)
@@ -131,7 +132,7 @@ export default function App() {
   }
   useEffect(() => {
     let active = true
-    void window.workspaceApi.read().then((result) => { if (active) { setArticleTitles(result.ok ? result.value.titles : {}); setArticleStyles(result.ok ? result.value.imageStyles : {}) } }).catch(() => { if (active) { setArticleTitles({}); setArticleStyles({}) } })
+    void window.workspaceApi.read().then((result) => { if (active) { setArticleTitles(result.ok ? result.value.titles : {}); setArticleStyles(result.ok ? result.value.imageStyles : {}); setPlatformArticleStyles(result.ok ? result.value.platformImageStylesByArticle ?? {} : {}) } }).catch(() => { if (active) { setArticleTitles({}); setArticleStyles({}); setPlatformArticleStyles({}) } })
     return () => { active = false }
   }, [workspaceVersion, treeVersion])
   useEffect(() => { if (!window.draftsApi) return; return window.draftsApi.onProgress(setProgress) }, [])
@@ -237,7 +238,7 @@ export default function App() {
       const deleted = new Set(deletedArticleIds), remaining = drafts.filter(item => !deleted.has(item.id))
       updateDocuments(all => Object.fromEntries(Object.entries(all).filter(([key]) => !deletedArticleIds.some(id => platforms.some(platform => key === `${id}:${platform}`)))))
       updatePlatformTitles(all => Object.fromEntries(Object.entries(all).filter(([key]) => !deletedArticleIds.some(id => platforms.some(platform => key === `${id}:${platform}`)))))
-      setDrafts(remaining); setArticleTitles(index.titles); setArticleStyles(index.imageStyles); setTreeVersion(value => value + 1)
+      setDrafts(remaining); setArticleTitles(index.titles); setArticleStyles(index.imageStyles); setPlatformArticleStyles(index.platformImageStylesByArticle ?? {}); setTreeVersion(value => value + 1)
       if (folderId && deletedFolderIds.includes(folderId)) setFolderId(null)
       if (deleted.has(selectedId)) { const next = visibleArticles(remaining, articleRuns)[0]; setSelectedId(next?.id ?? ''); if (next) setSelectedPlatform(next.platforms[0]); replaceRoute(page, next?.id ?? '', next?.platforms[0] ?? null); setEditorVersion(value => value + 1) }
       if (errors.length) showMessage(`已删除 ${deletedArticleIds.length} 篇文章、${deletedFolderIds.length} 个文件夹。${errors.join('；')}`, true)
@@ -252,7 +253,7 @@ export default function App() {
     try {
       if (!blank) {
         if (page === 'detail' && !(await discardCurrentDocument())) return null
-        const queued = await window.draftsApi.startArticle({ request, imageStyle: createForm.imageStyle, generateImages: createForm.generateImages, folderId: articleFolderId })
+        const queued = await window.draftsApi.startArticle({ request, imageStyle: createForm.imageStyle, imageStylesByPlatform: createForm.imageStylesByPlatform, generateImages: createForm.generateImages, folderId: articleFolderId })
         if (!queued.ok) { setStatus(queued.error); return null }
         await refresh()
         setCreateDirty(false); setCreateForm({ title: '', angle: '', audience: '', platforms: [...platforms], imageStyle: defaultImageStyle, generateImages: false }); setArticleFolderId(null); setTreeVersion(value => value + 1)
@@ -276,7 +277,7 @@ export default function App() {
       if (result.value.draft && createForm.generateImages && !blank) {
         const runId = crypto.randomUUID(); imageRunId.current = runId
         try {
-          const images = await window.imagesApi.generateForArticle({ id: result.value.draft.id, platforms: result.value.draft.platforms, style: createForm.imageStyle, runId })
+          const images = await window.imagesApi.generateForArticle({ id: result.value.draft.id, platforms: result.value.draft.platforms, style: createForm.imageStyle, imageStylesByPlatform: createForm.imageStylesByPlatform, runId })
           imageMessages = images.ok ? images.value : [`文章已保存，配图生成失败：${images.error}`]
         } catch { imageMessages = ['文章已保存，配图生成失败，请检查图片服务。'] }
         finally { imageRunId.current = '' }
@@ -292,8 +293,8 @@ export default function App() {
     try { const result = await window.draftsApi.retryArticle(id, skipResearch); if (!result.ok) setStatus(result.error) }
     catch { setStatus('无法重试文章生成，请检查工作区。') }
   }
-  async function saveImageStyle(id: string, style: ImageStyle): Promise<string | null> {
-    try { const result = await window.workspaceApi.change({ type: 'setImageStyle', draftId: id, style }); if (!result.ok) return result.error; setArticleStyles(result.value.imageStyles); return null }
+  async function saveImageStyle(id: string, platform: Platform, style: ImageStyle): Promise<string | null> {
+    try { const result = await window.workspaceApi.change({ type: 'setImageStyle', draftId: id, platform, style }); if (!result.ok) return result.error; setArticleStyles(result.value.imageStyles); setPlatformArticleStyles(result.value.platformImageStylesByArticle ?? {}); return null }
     catch { return '无法保存图片风格，请重试。' }
   }
   const pendingTitleSaves = useRef(new Map<string, Promise<boolean>>())
@@ -404,7 +405,7 @@ export default function App() {
     return () => window.removeEventListener('popstate', onPopState)
   }, [page, busy, dirty, topicStatus, drafts, articleRuns, runsLoaded, selectedId, selectedPlatform])
   function workspaceChanged() {
-    setFolderId(null); workspaceVersionRef.current += 1; runsRef.current = []; setArticleRuns([]); setDrafts([]); setDraftsReady(false); setRunsLoaded(false); setRegenerationVersions({}); updateDocuments(() => ({})); updatePlatformTitles(() => ({})); setArticleTitles({}); setArticleStyles({}); setTopicStatus(''); setCreateForm({ title: '', angle: '', audience: '', platforms: [...platforms], imageStyle: defaultImageStyle, generateImages: false }); setCreateDirty(false); setDrawerOpen(false); setWorkspaceVersion(value => value + 1)
+    setFolderId(null); workspaceVersionRef.current += 1; runsRef.current = []; setArticleRuns([]); setDrafts([]); setDraftsReady(false); setRunsLoaded(false); setRegenerationVersions({}); updateDocuments(() => ({})); updatePlatformTitles(() => ({})); setArticleTitles({}); setArticleStyles({}); setPlatformArticleStyles({}); setTopicStatus(''); setCreateForm({ title: '', angle: '', audience: '', platforms: [...platforms], imageStyle: defaultImageStyle, generateImages: false }); setCreateDirty(false); setDrawerOpen(false); setWorkspaceVersion(value => value + 1)
     setSelectedId(''); navigate('detail', '', null); void refresh()
   }
   async function beforeWorkspaceSwitch() {
@@ -481,7 +482,7 @@ export default function App() {
     {page === 'detail' && !showHome && !folderId && selectedRun && selectedRun.status !== 'done' && <Alert className="app-status block" role="status">{selectedRun.status === 'queued' ? '文章正在排队等待生成。' : selectedRun.status === 'running' ? (selectedRun.phase === 'images' && selectedRun.imageProgress ? selectedRun.imageProgress : `文章生成中：${({ research: '检索资料', plan: '规划内容', write: '撰写文案', review: '检查内容', save: '保存文章', images: '生成配图' } as const)[selectedRun.phase ?? 'research']}…`) : (selectedRun.message || '文章生成未完成。')}{['failed', 'waiting', 'interrupted'].includes(selectedRun.status) && <Button variant="link" size="xs" type="button" className="reload-button" onClick={() => void retryArticle(selectedRun.id, false)}>重试</Button>}{selectedRun.status === 'waiting' && <Button variant="link" size="xs" type="button" className="reload-button" onClick={() => void retryArticle(selectedRun.id, true)}>跳过联网继续</Button>}</Alert>}
     {page === 'detail' && !showHome && folderId && <FolderContents folderId={folderId} index={folderIndex} drafts={visibleDrafts} onOpenFolder={setFolderId} onOpenArticle={(draft, platform) => void openDraft(draft, platform)}/>}
     {page === 'detail' && showHome && <WorkspaceHome key={workspaceVersion} workspaceVersion={workspaceVersion} articleDataReady={draftsReady} runsReady={runsLoaded} runs={articleRuns} onTasks={() => navigate('tasks')} workspace={workspaces.current ? workspaceName(workspaces.current) : ''} drafts={drafts} titles={articleTitles} loading={loading} busy={busy} onCreate={() => openCreate(null)} onTopics={() => navigate('topics')} onOpen={draft => { void openDraft(draft) }} onOpenWorkspace={() => workspaceMenuHandler.current('open')}/>}
-    {page === 'detail' && !showHome && !folderId && (loading ? <div className="empty-state" role="status">正在读取文章…</div> : selectedDraft && current ? <Detail key={`${editorVersion}:${docKey}:${regenerationVersions[docKey] ?? 0}`} platformTitle={platformTitles[docKey]?.value ?? null} onPlatformTitleChange={(value) => updatePlatformTitles(all => all[docKey] ? { ...all, [docKey]: { ...all[docKey], value } } : all)} draft={displayedDraft ?? selectedDraft} selectedPlatform={selectedPlatform} document={current} editorBusy={busy || generatingArticle || regeneratingHere} onImageBusy={setOperationBusy} imageStyle={articleStyles[selectedDraft.id] ?? defaultImageStyle} onStyleSave={(style) => saveImageStyle(selectedDraft.id, style)} onDocumentChange={(value) => updateDocuments((all) => ({ ...all, [docKey]: { ...all[docKey], content: value } }))} onRegenerate={() => void regenerateCurrent()} regenerating={regeneratingHere} /> : selectedDraft ? <div className="empty-state" role="status">正在读取文案…</div> :
+    {page === 'detail' && !showHome && !folderId && (loading ? <div className="empty-state" role="status">正在读取文章…</div> : selectedDraft && current ? <Detail key={`${editorVersion}:${docKey}:${regenerationVersions[docKey] ?? 0}`} platformTitle={platformTitles[docKey]?.value ?? null} onPlatformTitleChange={(value) => updatePlatformTitles(all => all[docKey] ? { ...all, [docKey]: { ...all[docKey], value } } : all)} draft={displayedDraft ?? selectedDraft} selectedPlatform={selectedPlatform} document={current} editorBusy={busy || generatingArticle || regeneratingHere} onImageBusy={setOperationBusy} imageStyle={platformArticleStyles[selectedDraft.id]?.[selectedPlatform] ?? articleRuns.find(run => run.id === selectedDraft.id)?.imageStylesByPlatform?.[selectedPlatform] ?? articleStyles[selectedDraft.id] ?? defaultImageStyle} onStyleSave={(style) => saveImageStyle(selectedDraft.id, selectedPlatform, style)} onDocumentChange={(value) => updateDocuments((all) => ({ ...all, [docKey]: { ...all[docKey], content: value } }))} onRegenerate={() => void regenerateCurrent()} regenerating={regeneratingHere} /> : selectedDraft ? <div className="empty-state" role="status">正在读取文案…</div> :
       <section className="workspace-empty">
         <div className="workspace-empty-mark"><Icon name="edit" size={24}/></div>
         <h2>{visibleDrafts.length ? '打开一篇文章' : '从第一篇文章开始'}</h2>

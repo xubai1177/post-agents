@@ -28,6 +28,14 @@ export interface LocalBackgroundItem { group: LocalBackgroundGroup; filename: st
 export interface CanvasImageUsage { inputTokens: number | null; outputTokens: number | null; totalTokens: number | null; images: number | null }
 export interface CanvasAssetGeneration { asset: CanvasAsset; model: string; usage: CanvasImageUsage }
 export interface CanvasWindowApi {
+  listVoiceConfigs: () => Promise<Result<VoiceConfig[]>>
+  previewCloudVoice: (configId: string, speaker: string, text: string, speed: number) => Promise<Result<string>>
+  voiceStatuses: (id: string, data: import('./canvas-project').CanvasVoiceSnapshot) => Promise<Result<import('./canvas-project').CanvasVoiceStatus[]>>
+  generateVoice: (id: string, revision: string, panelId: string) => Promise<Result<void>>
+  previewVoice: (id: string, data: import('./canvas-project').CanvasVoiceSnapshot, panelId: string) => Promise<Result<string>>
+  listProjects: () => Promise<Result<import('./canvas-project').CanvasProjectSummary[]>>
+  loadProject: (id: string) => Promise<Result<import('./canvas-project').CanvasProject>>
+  saveProject: (id: string | null, revision: string | null, data: import('./canvas-project').CanvasProjectData) => Promise<Result<import('./canvas-project').CanvasProject>>
   listLocalBackgrounds: () => Promise<Result<LocalBackgroundItem[]>>
   readLocalBackground: (group: LocalBackgroundGroup, filename: string) => Promise<Result<CanvasAsset>>
   close: () => Promise<Result<void>>

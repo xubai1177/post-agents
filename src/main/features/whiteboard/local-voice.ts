@@ -29,6 +29,16 @@ export async function synthesizeLocalVoice(text: string, speed: number, director
     })
     const audio = await readFile(path)
     if (audio.length < 256 || audio.length > 10 * 1024 * 1024) throw new Error('白板视频：系统语音生成的音频无效。')
+    let hasAudio = false
+    if (audio.toString('ascii', 0, 4) === 'RIFF' && audio.toString('ascii', 8, 12) === 'WAVE') {
+      for (let pos = 12; pos + 8 <= audio.length;) {
+        const size = audio.readUInt32LE(pos + 4), end = pos + 8 + size
+        if (end > audio.length) break
+        if (audio.toString('ascii', pos, pos + 4) === 'data' && size > 0) { hasAudio = true; break }
+        pos = end + (size % 2)
+      }
+    }
+    if (!hasAudio) throw new Error('白板视频：系统语音未返回有效音频，请检查系统语音和运行权限。')
     return audio
   } finally { await rm(path, { force: true }) }
 }

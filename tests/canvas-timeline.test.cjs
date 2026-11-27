@@ -1,0 +1,42 @@
+const { test, after } = require('node:test')
+const assert = require('node:assert/strict')
+const { mkdtempSync, rmSync } = require('node:fs')
+const { tmpdir } = require('node:os')
+const { join } = require('node:path')
+const { buildSync } = require('esbuild')
+const dir = mkdtempSync(join(tmpdir(), 'canvas-timeline-test-'))
+const output = join(dir, 'timeline.cjs')
+buildSync({ entryPoints: ['src/renderer/src/features/whiteboard-canvas-timeline.ts'], bundle: true, platform: 'node', format: 'cjs', outfile: output, logLevel: 'silent' })
+const { canvasTimeline, moveCanvasDrawOrder, moveCanvasLayer, penTravelProgress } = require(output)
+after(() => rmSync(dir, { recursive: true, force: true }))
+test('绘制顺序独立于图层，旧数据保留默认时间', () => {
+  const layers = [{ id: 'a', duration: 2 }, { id: 'b', duration: 3 }, { id: 'c', duration: 1 }]
+  const legacy = canvasTimeline(layers)
+  assert.deepEqual(legacy.map(e => e.item.id), ['a', 'b', 'c'])
+  assert.deepEqual(legacy.map(e => e.wait), [.3, .45, .45])
+  const reordered = moveCanvasDrawOrder(layers, 'c', -1)
+  assert.deepEqual(reordered.map(e => e.id), ['a', 'b', 'c'])
+  assert.deepEqual(canvasTimeline(reordered).map(e => e.item.id), ['a', 'c', 'b'])
+  const layerReordered = [reordered[2], reordered[0], reordered[1]]
+  assert.deepEqual(canvasTimeline(layerReordered).map(e => e.item.id), ['a', 'c', 'b'])
+})
+test('等待和开始结束时间，以及画笔仅在等待末尾移动', () => {
+  const schedule = canvasTimeline([{ id: 'a', duration: 2, wait: 0, drawOrder: 0 }, { id: 'b', duration: 1, wait: 1, drawOrder: 1 }, { id: 'c', duration: 2, wait: .2, drawOrder: 2 }])
+  assert.deepEqual(schedule.map(e => [e.start, e.end]), [[0, 2], [3, 4], [4.2, 6.2]])
+  assert.equal(penTravelProgress(2.4, 2, 3), 0)
+  assert.ok(Math.abs(penTravelProgress(2.775, 2, 3) - .5) < 1e-9)
+  assert.equal(penTravelProgress(3, 2, 3), 1)
+  assert.ok(Math.abs(penTravelProgress(4.1, 4, 4.2) - .5) < 1e-9)
+  assert.equal(penTravelProgress(4, 4, 4), 1)
+})
+
+test('调整图层只改变遮盖顺序，并保留旧工程的动画顺序和等待', () => {
+  const layers = [{ id: 'a', duration: 2 }, { id: 'b', duration: 3 }, { id: 'c', duration: 1 }]
+  const moved = moveCanvasLayer(layers, 'a', 1)
+  assert.deepEqual(moved.map(item => item.id), ['b', 'a', 'c'])
+  assert.deepEqual(canvasTimeline(moved).map(entry => [entry.item.id, entry.wait]), [['a', .3], ['b', .45], ['c', .45]])
+  assert.deepEqual(moveCanvasLayer(moved, 'c', 1), moved)
+  const animated = moveCanvasDrawOrder(moved, 'c', -1)
+  assert.deepEqual(animated.map(item => item.id), ['b', 'a', 'c'])
+  assert.deepEqual(canvasTimeline(animated).map(entry => entry.item.id), ['a', 'c', 'b'])
+})

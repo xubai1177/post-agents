@@ -138,6 +138,10 @@ test('图片接口支持返回 base64，并拒绝无效的响应', async () => {
   try {
     globalThis.fetch = async (url, options) => { assert.equal(String(url), 'http://127.0.0.1:1234/v1/images/generations'); assert.equal(options?.method, 'POST'); return new Response(JSON.stringify({ data: [{ b64_json: png.toString('base64') }] })) }
     assert.deepEqual(await requestImage({ apiUrl: 'http://127.0.0.1:1234/v1', model: 'image', apiKey: 'fake' }, '封面'), png)
+    globalThis.fetch = async (_url, options) => { assert.equal(JSON.parse(String(options?.body)).size, '1504x640'); return new Response(JSON.stringify({ data: [{ b64_json: png.toString('base64') }] })) }
+    assert.deepEqual(await requestImage({ apiUrl: 'http://127.0.0.1:1234/v1', model: 'image', apiKey: 'fake' }, '封面', '1504x640'), png)
+    globalThis.fetch = async () => new Response('{}', { status: 400 })
+    await assert.rejects(requestImage({ apiUrl: 'http://127.0.0.1:1234/v1', model: 'image', apiKey: 'fake' }, '封面', '1504x640'), /带尺寸的请求/ )
     globalThis.fetch = async () => new Response(JSON.stringify({ data: [{ b64_json: '!bad!' }] }))
     await assert.rejects(requestImage({ apiUrl: 'http://127.0.0.1:1234/v1', model: 'image', apiKey: 'fake' }, '封面'))
     globalThis.fetch = async () => new Response(JSON.stringify({ data: [{ url: 'https://127.0.0.1/image.png' }] }))
@@ -500,15 +504,163 @@ test('图片策划按文章决定四至六张正文图并贯彻所选风格', as
     getImageSettings: async () => config, getRuntimeSettings: async () => config,
     readDraft: async () => ({ content: '文章内容', version: 'version' }),
     createTextModel: () => async (system: string) => { modelPrompt = system; return JSON.stringify(['封面', '正文一', '正文二', '正文三', '正文四', '正文五']) },
-    generateImages: async (_root: string, _request: unknown, prompts: string[], generate: (prompt: string) => Promise<Buffer>) => { planned = prompts.length; await generate(prompts[0]); return { images: [], failures: [] } },
+    generateImages: async (_root: string, _request: unknown, prompts: string[], generate: (prompt: string, index: number) => Promise<Buffer>) => { planned = prompts.length; await generate(prompts[0], 0); return { images: [], failures: [] } },
     requestImage: async (_config: unknown, prompt: string) => { sentPrompt = prompt; return Buffer.alloc(0) }
   }
   await generateImageSet({ id: '风格测试', platform: '小红书', version: 'version', style: 'watercolor' }, deps)
   assert.equal(planned, 6); assert.match(modelPrompt, /4 至 6 张正文配图/); assert.match(modelPrompt, /水彩/); assert.match(sentPrompt, /水彩/)
+  await generateImageSet({ id: '杂志风格测试', platform: '小红书', version: 'version', style: 'magazine' }, deps)
+  assert.match(modelPrompt, /黑白杂志/); assert.match(sentPrompt, /黑白杂志/); assert.match(sentPrompt, /文字与提供的文案一致/); assert.doesNotMatch(sentPrompt, /仅作插画示意/)
   const tooFew = { ...deps, createTextModel: () => async () => JSON.stringify(['封面', '一', '二', '三']) }
   await assert.rejects(generateImageSet({ id: '数量测试', platform: '小红书', version: 'version', style: 'flat' }, tooFew), /配图方案生成失败/)
   const tooMany = { ...deps, createTextModel: () => async () => JSON.stringify(Array.from({ length: 8 }, (_, i) => `图片${i}`)) }
   await assert.rejects(generateImageSet({ id: '数量上限', platform: '小红书', version: 'version', style: 'flat' }, tooMany), /配图方案生成失败/)
+})
+
+test('各平台的自定义风格提示词用于对应平台配图', async () => {
+  const { generateImageSet } = await import('../src/main/features/images/image-service')
+  const { defaultPlatformImageStyles, isPlatformImageStyles } = await import('../src/shared/image-styles')
+  const lists = defaultPlatformImageStyles()
+  lists.小红书.push({ id: 'custom-one', name: '纸雕', prompt: '蓝色纸雕竖版封面' })
+  lists.公众号.push({ id: 'custom-one', name: '木刻', prompt: '黑白木刻竖版封面' })
+  assert.equal(isPlatformImageStyles(lists), true)
+  assert.equal(isPlatformImageStyles({ ...lists, 小红书: [...lists.小红书, lists.小红书[0]] }), false)
+  const config = { draftsDirectory: '/workspace', apiUrl: 'https://example.com', model: 'test', apiKey: 'test', platformImageStyles: lists }
+  const prompts: string[] = []
+  const deps = {
+    getImageSettings: async () => config, getRuntimeSettings: async () => config,
+    readDraft: async () => ({ content: '文章内容', version: 'version' }),
+    createTextModel: () => async (system: string) => { prompts.push(system); return JSON.stringify(['封面', '一', '二', '三', '四']) },
+    generateImages: async (_root: string, _request: unknown, plans: string[], generate: (prompt: string, index: number) => Promise<Buffer>) => { await generate(plans[0], 0); return { images: [], failures: [] } },
+    requestImage: async (_config: unknown, prompt: string) => { prompts.push(prompt); return Buffer.alloc(0) }
+  }
+  await generateImageSet({ id: '测试', platform: '小红书', version: 'version', style: 'custom-one' }, deps)
+  await generateImageSet({ id: '测试', platform: '公众号', version: 'version', style: 'custom-one' }, deps)
+  assert.match(prompts[0], /蓝色纸雕竖版封面/); assert.match(prompts[1], /蓝色纸雕竖版封面/)
+  assert.match(prompts[2], /黑白木刻竖版封面/); assert.match(prompts[3], /黑白木刻竖版封面/)
+  assert.doesNotMatch(prompts[2], /不设固定画幅|横版/); assert.doesNotMatch(prompts[3], /仅作插画示意|横版/)
+  await assert.rejects(generateImageSet({ id: '测试', platform: '抖音图文', version: 'version', style: 'custom-one' }, deps), /所选图片风格已不存在/)
+})
+
+test('平台默认图片提示词升级时保留用户编辑、自定义风格和预览', async () => {
+  const { defaultPlatformImageStyles, upgradeLegacyPlatformImageStyles, isPlatformImageStyles } = await import('../src/shared/image-styles')
+  const defaults = defaultPlatformImageStyles()
+  assert.equal(isPlatformImageStyles(defaults), true)
+  assert.notEqual(defaults.小红书[0].prompt, defaults.公众号[0].prompt)
+  assert.notEqual(defaults.公众号[0].prompt, defaults.抖音图文[0].prompt)
+  for (const styles of Object.values(defaults)) for (const style of styles) {
+    assert.match(style.prompt, /封面/)
+    assert.doesNotMatch(style.prompt, /固定画幅/)
+    assert.match(style.prompt, /封面画幅比例：/)
+  }
+  const old = '清新扁平插画：温暖柔和色彩、清晰轮廓和简洁版式。'
+  const prior = defaultPlatformImageStyles()
+  prior.小红书[0] = { id: 'flat', name: '我的名称', prompt: old, preview: 'data:image/png;base64,AA==' }
+  prior.公众号[0] = { id: 'flat', name: '清新扁平', prompt: '我自己编写的风格' }
+  prior.抖音图文.push({ id: 'mine', name: '我的风格', prompt: '自定义要求' })
+  const updated = upgradeLegacyPlatformImageStyles(prior)
+  assert.equal(updated.小红书[0].prompt, defaults.小红书[0].prompt)
+  assert.equal(updated.小红书[0].name, '我的名称')
+  assert.equal(updated.小红书[0].preview, 'data:image/png;base64,AA==')
+  assert.equal(updated.公众号[0].prompt, '我自己编写的风格')
+  assert.deepEqual(updated.抖音图文.at(-1), prior.抖音图文.at(-1))
+  assert.equal(prior.小红书[0].prompt, old)
+  const v1 = defaultPlatformImageStyles()
+  v1.公众号[0].prompt = v1.公众号[0].prompt.replace('封面画幅比例：2.35:1。', '')
+  assert.equal(upgradeLegacyPlatformImageStyles(v1).公众号[0].prompt, defaults.公众号[0].prompt)
+  assert.match(defaults.小红书[0].prompt, /封面画幅比例：3:4/); assert.match(defaults.抖音图文[0].prompt, /封面画幅比例：3:4/); assert.match(defaults.公众号[0].prompt, /封面画幅比例：2.35:1/)
+})
+
+test('测试图片使用编辑中的风格要求，不按平台强制画幅', async () => {
+  const { buildStyleTestPrompt } = await import('../src/main/features/images/image-prompts')
+  for (const platform of ['小红书', '公众号', '抖音图文']) {
+    const prompt = buildStyleTestPrompt(platform, '水彩，竖版 3:4')
+    assert.match(prompt, /水彩，竖版 3:4/)
+    assert.doesNotMatch(prompt, /横版|不设固定画幅|仅作插画示意/)
+  }
+})
+
+test('风格选择器收到预览更新后重新读取，忽略过期请求和已关闭页面', async () => {
+  const { observeImageStyles, imageStylesChangedEvent } = await import('../src/renderer/src/features/image-style-events')
+  const { defaultPlatformImageStyles } = await import('../src/shared/image-styles')
+  type Styles = ReturnType<typeof defaultPlatformImageStyles>
+  type Response = { ok: true; value: { platformImageStyles: Styles } }
+  const target = new EventTarget(), pending: ((value: Response) => void)[] = [], seen: string[] = [], errors: string[] = []
+  const initial = defaultPlatformImageStyles(), updated = defaultPlatformImageStyles()
+  updated.公众号[0].preview = 'data:image/png;base64,AA=='
+  const stop = observeImageStyles(target, '公众号', () => new Promise(resolve => pending.push(resolve)), styles => seen.push(styles[0].preview ?? '初始预览'), message => errors.push(message))
+  await Promise.resolve()
+  target.dispatchEvent(new Event(imageStylesChangedEvent)); await Promise.resolve()
+  assert.equal(pending.length, 2)
+  pending[1]({ ok: true, value: { platformImageStyles: updated } }); await Promise.resolve(); await Promise.resolve()
+  pending[0]({ ok: true, value: { platformImageStyles: initial } }); await Promise.resolve(); await Promise.resolve()
+  assert.deepEqual(seen, ['data:image/png;base64,AA==']); assert.deepEqual(errors, [''])
+  target.dispatchEvent(new Event(imageStylesChangedEvent)); await Promise.resolve(); assert.equal(pending.length, 3)
+  stop(); pending[2]({ ok: true, value: { platformImageStyles: initial } }); await Promise.resolve(); await Promise.resolve()
+  target.dispatchEvent(new Event(imageStylesChangedEvent)); assert.equal(pending.length, 3)
+  assert.deepEqual(seen, ['data:image/png;base64,AA=='])
+})
+
+test('保存风格预览只更新目标平台和目标风格，保留其他未提交设置', async () => {
+  const { defaultPlatformImageStyles, imageStylePreview, replacePlatformStylePreview } = await import('../src/shared/image-styles')
+  const saved = defaultPlatformImageStyles()
+  const oldPrompt = saved.小红书[0].prompt, oldName = saved.小红书[0].name
+  const image = 'data:image/png;base64,AA=='
+  const next = replacePlatformStylePreview(saved, '小红书', { ...saved.小红书[0], name: '未保存的名称', prompt: '未保存的提示词', preview: image })
+  assert.equal(imageStylePreview(next.小红书[0]), image)
+  assert.equal(next.小红书[0].name, oldName); assert.equal(next.小红书[0].prompt, oldPrompt)
+  assert.deepEqual(next.公众号, saved.公众号)
+  assert.equal(saved.小红书[0].preview, undefined)
+  const custom = replacePlatformStylePreview(next, '公众号', { id: 'my-style', name: '自定义', prompt: '自定义提示词', preview: image })
+  assert.equal(imageStylePreview(custom.公众号.at(-1)!), image)
+  assert.equal(custom.小红书[0].preview, image)
+  assert.throws(() => replacePlatformStylePreview(saved, '小红书', { ...saved.小红书[0], preview: 'https://example.com/image.png' }), /预览无效/)
+  assert.throws(() => replacePlatformStylePreview(saved, '公众号', { id: 'new', name: '', prompt: '', preview: image }), /预览无效/)
+})
+
+test('内置封面示例按提示词比例显示，自定义预览优先', async () => {
+  const { defaultPlatformImageStyles, imageStylePreview } = await import('../src/shared/image-styles')
+  const defaults = defaultPlatformImageStyles()
+  assert.equal(imageStylePreview(defaults.公众号[0]), './image-style-previews/wechat/flat.webp')
+  assert.equal(imageStylePreview(defaults.小红书[0]), './image-style-previews/flat.webp')
+  assert.equal(imageStylePreview({ ...defaults.公众号[0], preview: 'data:image/png;base64,AA==' }), 'data:image/png;base64,AA==')
+})
+
+test('封面尺寸从明确配置的比例推导，只对已识别的图片模型生效', async () => {
+  const { coverSizeForStyle } = await import('../src/main/features/images/cover-size')
+  const local = { apiUrl: 'http://127.0.0.1:3425/v1', model: 'codex/gpt-image-2' }
+  const direct = { apiUrl: 'https://api.openai.com/v1', model: 'gpt-image-2' }
+  for (const config of [local, direct]) {
+    for (const [ratio, expected] of [['3:4', 3 / 4], ['2.35:1', 2.35], ['16:9', 16 / 9]] as const) {
+      const size = coverSizeForStyle(config, `示例风格。封面画幅比例：${ratio}。`)
+      assert.ok(size)
+      const [width, height] = size.split('x').map(Number)
+      assert.equal(width % 16, 0); assert.equal(height % 16, 0)
+      assert.ok(width * height >= 655360 && width * height <= 8294400)
+      assert.ok(Math.abs(width / height - expected) < 0.00001)
+    }
+    assert.equal(coverSizeForStyle(config, '没有指定封面画幅比例'), undefined)
+    assert.equal(coverSizeForStyle(config, '封面画幅比例：3:4。封面画幅比例：16:9。'), undefined)
+    assert.equal(coverSizeForStyle(config, '封面画幅比例：0:4。'), undefined)
+  }
+  assert.equal(coverSizeForStyle({ ...local, model: 'other-model' }, '封面画幅比例：3:4。'), undefined)
+  assert.equal(coverSizeForStyle({ ...direct, apiUrl: 'https://third-party.example/v1' }, '封面画幅比例：3:4。'), undefined)
+})
+
+test('正式配图只对封面传递选中风格的尺寸', async () => {
+  const { generateImageSet } = await import('../src/main/features/images/image-service')
+  const { defaultPlatformImageStyles } = await import('../src/shared/image-styles')
+  const config = { draftsDirectory: '/workspace', apiUrl: 'http://127.0.0.1:3425/v1', model: 'codex/gpt-image-2', apiKey: 'test', platformImageStyles: defaultPlatformImageStyles() }
+  const sizes: (string | undefined)[] = []
+  const deps = {
+    getImageSettings: async () => config, getRuntimeSettings: async () => config,
+    readDraft: async () => ({ content: '文章内容', version: 'version' }),
+    createTextModel: () => async () => JSON.stringify(['封面', '正文一', '正文二', '正文三', '正文四']),
+    generateImages: async (_root: string, _request: unknown, plans: string[], generate: (prompt: string, index: number) => Promise<Buffer>) => { await generate(plans[0], 0); await generate(plans[1], 1); return { images: [], failures: [] } },
+    requestImage: async (_config: unknown, _prompt: string, size?: string) => { sizes.push(size); return Buffer.alloc(0) }
+  }
+  await generateImageSet({ id: '测试', platform: '公众号', version: 'version', style: 'flat' }, deps)
+  assert.deepEqual(sizes, ['1504x640', undefined])
 })
 
 test('图片风格在文章元数据中保存且兼容旧工作空间', () => withRoot(async (root) => {
@@ -517,6 +669,14 @@ test('图片风格在文章元数据中保存且兼容旧工作空间', () => wi
   assert.deepEqual(Object.keys((await readWorkspaceIndex(root)).imageStyles), [])
   await changeWorkspaceIndex(root, { type: 'setImageStyle', draftId: id, style: 'handdrawn' })
   assert.equal((await readWorkspaceIndex(root)).imageStyles[id], 'handdrawn')
+  await changeWorkspaceIndex(root, { type: 'setImageStyle', draftId: id, style: 'magazine' })
+  assert.equal((await readWorkspaceIndex(root)).imageStyles[id], 'magazine')
+  await changeWorkspaceIndex(root, { type: 'setImageStyle', draftId: id, platform: '小红书', style: 'custom-one' })
+  await changeWorkspaceIndex(root, { type: 'setImageStyle', draftId: id, platform: '公众号', style: 'watercolor' })
+  const restored = await readWorkspaceIndex(root)
+  assert.equal(restored.imageStyles[id], 'magazine')
+  assert.equal(restored.platformImageStylesByArticle?.[id]?.['小红书'], 'custom-one')
+  assert.equal(restored.platformImageStylesByArticle?.[id]?.['公众号'], 'watercolor')
 }))
 
 test('文章优化只返回候选，外部版本变化时拒绝结果', async () => {
@@ -592,9 +752,12 @@ test('各平台规则支持默认值、单独覆盖、恢复默认及长度校�
 test('加密备份保存平台自定义规则，旧备份仍可读取', () => withRoot(async (root) => {
   const { createBackup, decodeBackup } = await import('../src/main/features/workspace/backup')
   const base = { apiUrl: '', model: '', apiKey: '', imageService: 'shared' as const, imageApiUrl: '', imageModel: '', imageApiKey: '' }
-  const current = await decodeBackup(await createBackup(root, { ...base, platformPrompts: { 公众号: '自定义规则' }, titlePrompts: { 公众号: '标题规则' } }, 'test-password'), 'test-password')
+  const { defaultPlatformImageStyles } = await import('../src/shared/image-styles')
+  const imageStyles = defaultPlatformImageStyles(); imageStyles.公众号.push({ id: 'custom', name: '自定义', prompt: '黑白纸雕', preview: 'data:image/png;base64,AA==' })
+  const current = await decodeBackup(await createBackup(root, { ...base, platformPrompts: { 公众号: '自定义规则' }, titlePrompts: { 公众号: '标题规则' }, platformImageStyles: imageStyles }, 'test-password'), 'test-password')
   assert.equal(current.settings.platformPrompts?.公众号, '自定义规则')
   assert.equal(current.settings.titlePrompts?.公众号, '标题规则')
+  assert.deepEqual(current.settings.platformImageStyles?.公众号.at(-1), imageStyles.公众号.at(-1))
   const legacy = await decodeBackup(await createBackup(root, base, 'test-password'), 'test-password')
   assert.equal(legacy.settings.platformPrompts, undefined)
 }))
@@ -605,6 +768,7 @@ test('文章生成后只为成功的平台依次配图，失败保留其他平�
   const notices: { count: number; partial: boolean }[] = []
   const result = await generateCreatedArticleImages({ id: '主题', title: '主题', platforms: ['小红书', '公众号', '抖音图文'] }, 'watercolor', {
     onProgress: (message) => { steps.push(message) },
+    imageStylesByPlatform: { 小红书: 'custom-style', 抖音图文: 'magazine' },
     onComplete: (count, partial) => { notices.push({ count, partial }) },
     read: async (_id, platform) => platform === '公众号' ? { ok: false, error: '读取失败' } : { ok: true, value: { content: '文章', version: `version-${platform}` } },
     generate: async (request) => {
@@ -614,8 +778,8 @@ test('文章生成后只为成功的平台依次配图，失败保留其他平�
   })
   assert.equal(steps.length, 3); assert.equal(requests.length, 2)
   assert.deepEqual(requests.map(({ platform, version, style, count }) => ({ platform, version, style, count })), [
-    { platform: '小红书', version: 'version-小红书', style: 'watercolor', count: undefined },
-    { platform: '抖音图文', version: 'version-抖音图文', style: 'watercolor', count: undefined }
+    { platform: '小红书', version: 'version-小红书', style: 'custom-style', count: undefined },
+    { platform: '抖音图文', version: 'version-抖音图文', style: 'magazine', count: undefined }
   ])
   assert.match(result[0], /已保存 1 张/); assert.match(result[0], /第 2 张/); assert.match(result[1], /读取失败/); assert.match(result[2], /已保存 0 张/)
   assert.deepEqual(notices, [{ count: 1, partial: true }])
@@ -668,7 +832,7 @@ test('启动首页显示工作区与真实文章，空工作区提供打开入�
   assert.match(empty, /打开工作区/); assert.doesNotMatch(empty, /文章新标题/)
 })
 
-test('新建文章默认不生成配图，勾选后显示四种风格预览', async () => {
+test('新建文章默认不生成配图，勾选后显示五种风格预览', async () => {
   const { createElement } = await import('react')
   const { renderToStaticMarkup } = await import('react-dom/server')
   const { Create } = await import('../src/renderer/src/features/Create')
@@ -677,8 +841,8 @@ test('新建文章默认不生成配图，勾选后显示四种风格预览', as
   const initial = renderToStaticMarkup(createElement(Create, { ...props, form: base }))
   assert.match(initial, /type="checkbox"/); assert.doesNotMatch(initial, /class="image-style-card"/); assert.match(initial, /小红书/); assert.doesNotMatch(initial, /公众号/)
   const selected = renderToStaticMarkup(createElement(Create, { ...props, form: { ...base, generateImages: true } }))
-  assert.equal((selected.match(/class="image-style-card"/g) ?? []).length, 4)
-  assert.match(selected, /清新扁平/); assert.match(selected, /手绘插画/); assert.match(selected, /水彩/); assert.match(selected, /极简信息图/)
+  assert.equal((selected.match(/class="image-style-card"/g) ?? []).length, 5)
+  assert.match(selected, /黑白杂志/); assert.match(selected, /清新扁平/); assert.match(selected, /手绘插画/); assert.match(selected, /水彩/); assert.match(selected, /极简信息图/)
   assert.doesNotMatch(initial, /创建空白文章/); assert.doesNotMatch(selected, /创建空白文章/)
 })
 
@@ -987,7 +1151,7 @@ test('新文章先创建并入队，最多三篇并行，切换页面不影响�
       active--; return result
     }
   })
-  const options = (title: string) => ({ request: { title, audience: '', platforms: ['小红书' as const], research: 'skip' as const }, imageStyle: 'flat' as const, generateImages: false, folderId: null })
+  const options = (title: string) => ({ request: { title, audience: '', platforms: ['小红书' as const], research: 'skip' as const }, imageStyle: 'flat' as const, imageStylesByPlatform: { 小红书: 'custom-style' }, generateImages: false, folderId: null })
   const drafts = []
   for (let i = 0; i < 4; i++) drafts.push(await queue.start(root, options(`任务${i}`)))
   const waitFor = async (check: () => boolean) => { for (let i = 0; i < 200 && !check(); i++) await new Promise(resolve => setTimeout(resolve, 5)); assert.ok(check()) }
@@ -1001,6 +1165,7 @@ test('新文章先创建并入队，最多三篇并行，切换页面不影响�
   while (!queueIsIdle() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10))
   assert.ok(queueIsIdle(), '等待四篇文章完成并保存任务状态超时')
   const runs = await queue.load(root)
+  assert.equal(runs[0].imageStylesByPlatform?.小红书, 'custom-style')
   assert.equal(runs.filter(run => run.status === 'done').length, 4,
     runs.map(run => `${run.request.title} ${run.status} ${run.message ?? ''}`).join('\n'))
 }))
@@ -1391,7 +1556,10 @@ test('流式备份支持跨块文件、加密校验和旧备份兼容', () => wi
   const { createBackup } = await import('../src/main/features/workspace/backup')
   const source = join(root, 'source'); await mkdir(join(source, '空目录'), { recursive: true })
   const content = Buffer.alloc(3 * 1024 * 1024 + 7, 0xab); await writeFile(join(source, '大文件'), content)
-  const settings = { apiUrl: 'https://example.com', model: 'model', apiKey: 'secret', imageService: 'shared' as const, imageApiUrl: '', imageModel: '', imageApiKey: '' }
+  const { defaultPlatformImageStyles } = await import('../src/shared/image-styles')
+  const platformImageStyles = defaultPlatformImageStyles()
+  for (const style of platformImageStyles.小红书) style.preview = 'data:image/jpeg;base64,' + 'A'.repeat(240000)
+  const settings = { apiUrl: 'https://example.com', model: 'model', apiKey: 'secret', imageService: 'shared' as const, imageApiUrl: '', imageModel: '', imageApiKey: '', platformImageStyles }
   for (const password of ['', 'test-password']) {
     const backup = join(root, password ? 'encrypted.postbackup' : 'plain.postbackup'), target = join(root, password ? 'encrypted' : 'plain')
     const progress: import('../src/shared/workspace').BackupExportProgress[] = []
@@ -1401,6 +1569,7 @@ test('流式备份支持跨块文件、加密校验和旧备份兼容', () => wi
     await verifyStreamBackup(backup, password); await mkdir(target)
     const restored = await restoreStreamBackup(backup, password, target)
     assert.equal(restored.apiKey, password ? 'secret' : '')
+    assert.equal(restored.platformImageStyles?.小红书[0].preview?.length, platformImageStyles.小红书[0].preview?.length)
     assert.deepEqual(await readFile(join(target, '大文件')), content)
     assert.equal((await readdir(target)).includes('空目录'), true)
     if (password) {

@@ -1,3 +1,4 @@
+import { defaultPlatformImageStyles } from '../../../shared/image-styles'
 import { VoiceSettings } from './VoiceSettings'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Button } from '@/components/ui/button'
@@ -13,7 +14,7 @@ import { folderPath } from './FolderPicker'
 import { defaultPlatformLinks } from '../../../shared/platform-links'
 
 const settingsKey = 'post-agents-model-settings'
-const initialSettings: AppSettings = { appearance: 'light', accentColor: defaultAccentColor, panelOpacity: defaultPanelOpacity, apiUrl: '', model: '', draftsDirectory: '', hasApiKey: false, imageService: 'shared', imageApiUrl: '', imageModel: '', hasImageApiKey: false, platformPrompts: {}, titlePrompts: {}, platformLinks: defaultPlatformLinks() }
+const initialSettings: AppSettings = { appearance: 'light', accentColor: defaultAccentColor, panelOpacity: defaultPanelOpacity, apiUrl: '', model: '', draftsDirectory: '', hasApiKey: false, imageService: 'shared', imageApiUrl: '', imageModel: '', hasImageApiKey: false, platformPrompts: {}, titlePrompts: {}, platformLinks: defaultPlatformLinks(), platformImageStyles: defaultPlatformImageStyles() }
 function readLegacySettings(): LegacySettings | undefined {
   try {
     const value: unknown = JSON.parse(localStorage.getItem(settingsKey) ?? 'null')

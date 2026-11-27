@@ -1,0 +1,73 @@
+const { test } = require('node:test')
+const assert = require('node:assert/strict')
+const { mkdtemp, rm, readFile, writeFile } = require('node:fs/promises')
+const { tmpdir } = require('node:os')
+const { join } = require('node:path')
+const { randomUUID } = require('node:crypto')
+const { buildSync } = require('esbuild')
+const { mkdtempSync } = require('node:fs')
+const bundleDir = mkdtempSync(join(tmpdir(), 'canvas-project-bundle-'))
+const bundle = join(bundleDir, 'canvas-project.cjs')
+buildSync({ entryPoints: ['src/main/features/whiteboard/canvas-project.ts'], bundle: true, platform: 'node', format: 'cjs', outfile: bundle, logLevel: 'silent' })
+const store = require(bundle)
+const { after } = require('node:test')
+after(() => rm(bundleDir, { recursive: true, force: true }))
+const data = () => ({ version: 1, name: '测试工程', panels: [{ id: randomUUID(), name: '画布 1', items: [{ id: randomUUID(), kind: 'text', x: .2, y: .2, w: .4, h: .2, color: '#30343b', lineWidth: 3, size: 44, text: '你好', duration: 2, wait: 0, drawOrder: 1 }], background: { color: '#ffffff', image: null, name: '', mode: 'cover', scale: 1, x: .5, y: .5 }, ratio: 'landscape' }, { id: randomUUID(), name: '画布 2', items: [], background: { color: '#ffffff', image: null, name: '', mode: 'cover', scale: 1, x: .5, y: .5 }, ratio: 'vertical' }], assets: [], activePanel: 1, pen: 'pencil' })
+test('工程保存、重新读取、多画布和版本冲突保护', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'canvas-project-test-'))
+  try {
+    const input = data(), first = await store.saveCanvasProject(root, null, null, input)
+    assert.deepEqual((await store.loadCanvasProject(root, first.id)).panels, input.panels.map(panel => ({ ...panel, holdSeconds: 2, narration: '' })))
+    const oldInput = data(); delete oldInput.panels[0].items[0].wait; delete oldInput.panels[0].items[0].drawOrder
+    const old = await store.saveCanvasProject(root, null, null, oldInput)
+    assert.equal((await store.loadCanvasProject(root, old.id)).panels[0].items[0].wait, undefined)
+    assert.ok((await store.listCanvasProjects(root)).some(project => project.id === first.id && project.name === input.name))
+    const second = await store.saveCanvasProject(root, first.id, first.revision, { ...input, name: '更新工程' })
+    await assert.rejects(store.saveCanvasProject(root, first.id, first.revision, input), /外部修改/)
+    assert.equal((await store.loadCanvasProject(root, first.id)).revision, second.revision)
+    const path = join(root, '白板画布工程', `${first.id}.json`), original = await readFile(path, 'utf8')
+    await writeFile(path, original.replace('更新工程', '外部修改'))
+    await assert.rejects(store.saveCanvasProject(root, first.id, second.revision, input), /外部修改/)
+    await writeFile(path, original)
+    await assert.rejects(store.saveCanvasProject(root, first.id, second.revision, { ...input, activePanel: 9 }))
+    assert.equal(await readFile(path, 'utf8'), original)
+    await writeFile(path, '{broken')
+    await assert.rejects(store.loadCanvasProject(root, first.id))
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test('旧工程默认停留两秒，并保留画布顺序和独立停留时间', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'canvas-project-hold-'))
+  try {
+    const input = data(), first = await store.saveCanvasProject(root, null, null, input)
+    const path = join(root, '白板画布工程', `${first.id}.json`), raw = JSON.parse(await readFile(path, 'utf8'))
+    raw.panels.forEach(panel => delete panel.holdSeconds)
+    await writeFile(path, JSON.stringify(raw))
+    const legacy = await store.loadCanvasProject(root, first.id)
+    assert.deepEqual(legacy.panels.map(panel => panel.holdSeconds), [2, 2])
+    const updated = await store.saveCanvasProject(root, legacy.id, legacy.revision, { ...legacy, panels: [{ ...legacy.panels[1], holdSeconds: 0 }, { ...legacy.panels[0], holdSeconds: 3.5 }], activePanel: 0 })
+    const restored = await store.loadCanvasProject(root, updated.id)
+    assert.deepEqual(restored.panels.map(panel => panel.id), [legacy.panels[1].id, legacy.panels[0].id])
+    assert.deepEqual(restored.panels.map(panel => panel.holdSeconds), [0, 3.5])
+    await assert.rejects(store.saveCanvasProject(root, restored.id, restored.revision, { ...restored, panels: [{ ...restored.panels[0], holdSeconds: 61 }] }))
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test('旁白按画布保存、空文字兼容旧工程', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'canvas-project-narration-'))
+  try {
+    const input = data(), first = await store.saveCanvasProject(root, null, null, input)
+    const path = join(root, '白板画布工程', `${first.id}.json`), raw = JSON.parse(await readFile(path, 'utf8'))
+    raw.panels.forEach(panel => delete panel.narration)
+    await writeFile(path, JSON.stringify(raw))
+    const legacy = await store.loadCanvasProject(root, first.id)
+    assert.deepEqual(legacy.panels.map(panel => panel.narration), ['', ''])
+    const changed = { ...legacy, panels: [{ ...legacy.panels[0], narration: '第一段\n第二行' }, { ...legacy.panels[1], narration: '' }] }
+    const saved = await store.saveCanvasProject(root, legacy.id, legacy.revision, changed)
+    const restored = await store.loadCanvasProject(root, saved.id)
+    assert.deepEqual(restored.panels.map(panel => panel.narration), ['第一段\n第二行', ''])
+    const reordered = await store.saveCanvasProject(root, saved.id, saved.revision, { ...restored, panels: [restored.panels[1], restored.panels[0]], activePanel: 0 })
+    assert.deepEqual((await store.loadCanvasProject(root, reordered.id)).panels.map(panel => panel.narration), ['', '第一段\n第二行'])
+    await assert.rejects(store.saveCanvasProject(root, reordered.id, reordered.revision, { ...restored, panels: [{ ...restored.panels[0], narration: '字'.repeat(10001) }] }))
+  } finally { await rm(root, { recursive: true, force: true }) }
+})

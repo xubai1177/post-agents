@@ -3,6 +3,10 @@ import { request } from 'node:https'
 import { isIP } from 'node:net'
 import { publicAddress } from './public-network'
 
+export class ImageSizeRequestError extends Error {
+  constructor() { super('图片服务拒绝了带尺寸的请求，请检查模型、尺寸及服务配置。'); this.name = 'ImageSizeRequestError' }
+}
+
 const maxBytes = 15 * 1024 * 1024
 async function download(urlString: string): Promise<Buffer> {
   const url = new URL(urlString)
@@ -22,11 +26,12 @@ async function download(urlString: string): Promise<Buffer> {
     req.on('error', reject); req.end()
   })
 }
-export async function requestImageWithUsage(config: { apiUrl: string; model: string; apiKey: string }, prompt: string, onUsage?: (usage: unknown) => void): Promise<{ bytes: Buffer; usage: unknown }> {
+export async function requestImageWithUsage(config: { apiUrl: string; model: string; apiKey: string }, prompt: string, onUsage?: (usage: unknown) => void, size?: string): Promise<{ bytes: Buffer; usage: unknown }> {
   const base = new URL(config.apiUrl.endsWith('/') ? config.apiUrl : `${config.apiUrl}/`)
   if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password || base.search || base.hash) throw new Error('图片服务地址无效。')
   const endpoint = new URL('images/generations', base)
-  const response = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${config.apiKey}` }, body: JSON.stringify({ model: config.model, prompt, n: 1 }), signal: AbortSignal.timeout(120000), redirect: 'error' })
+  const response = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${config.apiKey}` }, body: JSON.stringify({ model: config.model, prompt, n: 1, ...(size && { size }) }), signal: AbortSignal.timeout(120000), redirect: 'error' })
+  if (!response.ok && size && (response.status === 400 || response.status === 422)) throw new ImageSizeRequestError()
   if (!response.ok || !response.body) throw new Error('图片服务请求失败。')
   const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let length = 0
   while (true) { const { done, value } = await reader.read(); if (done) break; length += value.length; if (length > maxBytes * 2) { await reader.cancel(); throw new Error('图片响应过大。') }; chunks.push(value) }
@@ -39,4 +44,4 @@ export async function requestImageWithUsage(config: { apiUrl: string; model: str
   throw new Error('图片服务未返回图片。')
 }
 
-export async function requestImage(config: { apiUrl: string; model: string; apiKey: string }, prompt: string): Promise<Buffer> { return (await requestImageWithUsage(config, prompt)).bytes }
+export async function requestImage(config: { apiUrl: string; model: string; apiKey: string }, prompt: string, size?: string): Promise<Buffer> { return (await requestImageWithUsage(config, prompt, undefined, size)).bytes }

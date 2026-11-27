@@ -1,5 +1,5 @@
 import type { Platform } from './drafts'
-import type { ImageStyle } from './image-styles'
+import type { ImageStyle, PlatformStyleSelections } from './image-styles'
 import type { ResearchSource } from './research'
 import type { Result } from './settings'
 
@@ -20,7 +20,7 @@ export interface TopicWorkspace { version: 1; batches: TopicRecord[]; tasks: Top
 export interface TopicsApi {
   readRecords: () => Promise<Result<TopicWorkspace>>
   saveRecords: (data: TopicWorkspace) => Promise<Result<TopicWorkspace>>
-  startBatch: (request: { batchId: string; indexes: number[]; platforms: Platform[]; imageStyle: ImageStyle; generateImages: boolean; folderId: string }) => Promise<Result<{ started: number; skipped: number; failed: number }>>
+  startBatch: (request: { batchId: string; indexes: number[]; platforms: Platform[]; imageStyle: ImageStyle; imageStylesByPlatform?: PlatformStyleSelections; generateImages: boolean; folderId: string }) => Promise<Result<{ started: number; skipped: number; failed: number }>>
   start: (request: TopicRequest) => Promise<Result<void>>
   retry: (id: string, mode: 'retry' | 'skip') => Promise<Result<void>>
   onChanged: (callback: () => void) => () => void

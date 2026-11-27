@@ -3,12 +3,13 @@ import { Check, ChevronDown, LoaderCircle, Pause, Play } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog'
 import catalog from '../../../shared/volcengine-voices.json'
+import type { Result } from '../../../shared/settings'
 import { voiceLanguage as languageOf, voiceLanguages as languageNames } from '../../../shared/voice-language'
 
 const samples: Record<string, string> = { zh: '你好，很高兴和你见面。', en: 'Hello, it is nice to meet you.', ja: 'こんにちは、はじめまして。', id: 'Halo, senang bertemu denganmu.', vi: 'Xin chào, rất vui được gặp bạn.', es: 'Hola, mucho gusto en conocerte.', pt: 'Olá, prazer em conhecer você.', th: 'สวัสดี ยินดีที่ได้พบคุณ', ko: '안녕하세요, 만나서 반갑습니다.', ru: 'Здравствуйте, рад вас видеть.', ms: 'Helo, gembira bertemu anda.', fil: 'Kumusta, ikinagagalak kitang makilala.', fr: 'Bonjour, ravi de vous rencontrer.', it: 'Ciao, piacere di conoscerti.', ar: 'مرحباً، سعيد بلقائك.', de: 'Hallo, schön dich kennenzulernen.' }
 const languages = ['zh', ...Array.from(new Set(catalog.voices.map(languageOf))).filter(item => item !== 'zh').sort((a, b) => (languageNames[a] ?? '其他').localeCompare(languageNames[b] ?? '其他', 'zh-CN'))]
 
-export function VoicePicker({ value, onChange, configId, speed, disabled }: { value: string; onChange: (value: string) => void; configId: string; speed: number; disabled: boolean }) {
+export function VoicePicker({ value, onChange, configId, speed, disabled, preview = window.whiteboardApi?.previewVoice }: { value: string; onChange: (value: string) => void; configId: string; speed: number; disabled: boolean; preview?: (configId: string, speaker: string, text: string, speed: number) => Promise<Result<string>> }) {
   const [open, setOpen] = useState(false)
   const [language, setLanguage] = useState('zh')
   const [query, setQuery] = useState('')
@@ -36,7 +37,7 @@ export function VoicePicker({ value, onChange, configId, speed, disabled }: { va
     if (!audio) {
       setLoading(voice.id)
       try {
-        const result = await window.whiteboardApi.previewVoice(configId, voice.id, samples[languageOf(voice)] ?? samples.zh, speed)
+        const result = await (preview ? preview(configId, voice.id, samples[languageOf(voice)] ?? samples.zh, speed) : Promise.reject(new Error('试听不可用')))
         if (request !== serial.current) return
         if (!result.ok) { setError(result.error); return }
         audio = result.value

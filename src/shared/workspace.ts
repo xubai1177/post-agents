@@ -1,10 +1,10 @@
-import type { ImageStyle } from './image-styles'
-import type { Draft } from './drafts'
+import type { ImageStyle, PlatformStyleSelections } from './image-styles'
+import type { Draft, Platform } from './drafts'
 import type { AppSettings, Result } from './settings'
 
 export interface WorkspaceFolder { id: string; name: string; parentId: string | null }
 export type WorkspaceNodeId = `folder:${string}` | `article:${string}`
-export interface WorkspaceIndex { version: 1; folders: WorkspaceFolder[]; assignments: Record<string, string>; titles: Record<string, string>; imageStyles: Record<string, ImageStyle>; order?: WorkspaceNodeId[]; defaultFolderId?: string; generationFolderId?: string; topicFolders?: Record<string, string> }
+export interface WorkspaceIndex { version: 1; folders: WorkspaceFolder[]; assignments: Record<string, string>; titles: Record<string, string>; imageStyles: Record<string, ImageStyle>; platformImageStylesByArticle?: Record<string, PlatformStyleSelections>; order?: WorkspaceNodeId[]; defaultFolderId?: string; generationFolderId?: string; topicFolders?: Record<string, string> }
 export type WorkspaceNode =
   | { id: `folder:${string}`; kind: 'folder'; item: WorkspaceFolder }
   | { id: `article:${string}`; kind: 'article'; item: Draft }
@@ -39,7 +39,7 @@ export type WorkspaceChange =
   | { type: 'moveNodes'; nodes: WorkspaceNodeId[]; folderId: string | null }
   | { type: 'moveDraft'; draftId: string; folderId: string | null }
   | { type: 'reorder'; parentId: string | null; node: WorkspaceNodeId; target: WorkspaceNodeId; position: 'before' | 'after' }
-  | { type: 'setImageStyle'; draftId: string; style: ImageStyle }
+  | { type: 'setImageStyle'; draftId: string; style: ImageStyle; platform?: Platform }
   | { type: 'renameArticle'; draftId: string; title: string; expectedTitle: string }
 export interface DeleteNodesPlan { nodes: WorkspaceNodeId[]; folderIds: string[]; articleIds: string[] }
 export interface DeleteNodesResult { index: WorkspaceIndex; deletedArticleIds: string[]; deletedFolderIds: string[]; errors: string[] }

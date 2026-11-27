@@ -93,7 +93,7 @@ class Reader {
   }
   async finish(): Promise<void> { if (this.buffer.length) throw new Error('备份文件格式无效。'); for (;;) { const next = await this.iterator.next(); if (next.done) break; if (next.value.length) throw new Error('备份文件格式无效。') } }
   async close(): Promise<void> { await this.iterator.return?.() }
-  async record(): Promise<unknown> { const length = (await this.read(4)).readUInt32BE(); if (!length) return null; if (length > 1024 * 1024) throw new Error('备份文件格式无效。'); try { return JSON.parse((await this.read(length)).toString('utf8')) as unknown } catch { throw new Error('备份文件格式无效。') } }
+  async record(maxLength = 1024 * 1024): Promise<unknown> { const length = (await this.read(4)).readUInt32BE(); if (!length) return null; if (length > maxLength) throw new Error('备份文件格式无效。'); try { return JSON.parse((await this.read(length)).toString('utf8')) as unknown } catch { throw new Error('备份文件格式无效。') } }
 }
 
 // Authenticate the entire encrypted file before creating any restored files.
@@ -102,7 +102,7 @@ export async function verifyStreamBackup(path: string, password: string): Promis
 export async function restoreStreamBackup(path: string, password: string, root: string): Promise<BackupSettings> {
   const reader = new Reader(payload(path, password))
   try {
-    const rawSettings = await reader.record()
+    const rawSettings = await reader.record(8 * 1024 * 1024)
     // Reuse the legacy settings validator, including the unencrypted credential rule.
     const file = await open(path, 'r'); let encrypted: boolean
     try { const flag = Buffer.alloc(1); await file.read(flag, 0, 1, magic.length); encrypted = flag[0] === 1 } finally { await file.close() }

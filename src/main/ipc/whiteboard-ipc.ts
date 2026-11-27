@@ -1,11 +1,13 @@
 import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { readFile, stat } from 'node:fs/promises'
 import { basename } from 'node:path'
+import { listCanvasProjects, loadCanvasProject, saveCanvasProject } from '../features/whiteboard/canvas-project'
+import { canvasVoiceStatuses, generateCanvasVoice, previewCanvasVoice } from '../features/whiteboard/canvas-voice'
 import { saveCanvasVideo } from '../features/whiteboard/canvas-export'
 import { decodeCanvasAsset, generateCanvasAsset } from '../features/whiteboard/canvas-assets'
 import { listLocalBackgrounds, readLocalBackground } from '../features/whiteboard/local-backgrounds'
 import { isSafeCanvasVideo } from '../features/whiteboard/canvas-validation'
-import { closeCanvasWindow, isCanvasWindow, openCanvasWindow } from '../features/whiteboard/canvas-window'
+import { closeCanvasWindow, isCanvasWindow, openCanvasWindow, canvasWorkspace } from '../features/whiteboard/canvas-window'
 import { getDraftsDirectory, loadSettings } from '../features/settings/settings'
 import { createProject, generatePlan, listProjects, projectDirectory, updatePlan, generateSticker, generateMissingStickers, replaceSticker, stickerData, renderProject, cancelRender, videoFile, deleteVideo, previewScene } from '../features/whiteboard/project'
 import { respond } from './security'
@@ -34,7 +36,15 @@ export function registerWhiteboard(): void {
   ipcMain.handle('whiteboard:voice-config-save', (event, input: unknown) => safe(event, () => { if (isVideoWindow(event.sender) || isCanvasWindow(event.sender)) throw new Error('白板视频：请在主窗口设置语音服务。'); return saveVoiceConfig(input) }))
   ipcMain.handle('whiteboard:voice-config-delete', (event, id: unknown) => safe(event, () => { if (isVideoWindow(event.sender) || isCanvasWindow(event.sender)) throw new Error('白板视频：请在主窗口设置语音服务。'); return deleteVoiceConfig(id) }))
   ipcMain.handle('whiteboard:voice-preview', (event, configId: unknown, speaker: unknown, text: unknown, speed: unknown) => safe(event, () => previewCloudVoice(configId, speaker, text, speed)))
-  ipcMain.handle('whiteboard:canvas-open', event => safe(event, async () => { if (isCanvasWindow(event.sender)) throw new Error('白板视频：画布已打开。'); await openCanvasWindow() }))
+  ipcMain.handle('whiteboard:canvas-open', event => safe(event, async () => { if (isCanvasWindow(event.sender)) throw new Error('白板视频：画布已打开。'); await openCanvasWindow(await getDraftsDirectory()) }))
+  ipcMain.handle('whiteboard:canvas-voice-configs', event => safe(event, async () => { if (!isCanvasWindow(event.sender)) throw new Error('白板视频：窗口无效。'); return listVoiceConfigs() }))
+  ipcMain.handle('whiteboard:canvas-voice-sample', (event, configId: unknown, speaker: unknown, text: unknown, speed: unknown) => safe(event, () => { if (!isCanvasWindow(event.sender)) throw new Error('白板视频：窗口无效。'); return previewCloudVoice(configId, speaker, text, speed) }))
+  ipcMain.handle('whiteboard:canvas-voice-status', (event, id: unknown, data: unknown) => safe(event, () => { if (typeof id !== 'string') throw new Error('白板视频：工程编号无效。'); return canvasVoiceStatuses(canvasWorkspace(event.sender), id, data) }))
+  ipcMain.handle('whiteboard:canvas-voice-generate', (event, id: unknown, revision: unknown, panelId: unknown) => safe(event, () => { if (typeof id !== 'string' || typeof revision !== 'string' || typeof panelId !== 'string') throw new Error('白板视频：工程编号无效。'); return generateCanvasVoice(canvasWorkspace(event.sender), id, revision, panelId) }))
+  ipcMain.handle('whiteboard:canvas-voice-audio', (event, id: unknown, data: unknown, panelId: unknown) => safe(event, () => { if (typeof id !== 'string' || typeof panelId !== 'string') throw new Error('白板视频：工程编号无效。'); return previewCanvasVoice(canvasWorkspace(event.sender), id, data, panelId) }))
+  ipcMain.handle('whiteboard:canvas-project-list', event => safe(event, () => listCanvasProjects(canvasWorkspace(event.sender))))
+  ipcMain.handle('whiteboard:canvas-project-load', (event, id: unknown) => safe(event, () => { if (typeof id !== 'string') throw new Error('白板视频：工程编号无效。'); return loadCanvasProject(canvasWorkspace(event.sender), id) }))
+  ipcMain.handle('whiteboard:canvas-project-save', (event, id: unknown, revision: unknown, data: unknown) => safe(event, () => { if (!(id === null || typeof id === 'string') || !(revision === null || typeof revision === 'string')) throw new Error('白板视频：工程编号无效。'); return saveCanvasProject(canvasWorkspace(event.sender), id, revision, data) }))
   ipcMain.handle('whiteboard:canvas-close', event => safe(event, async () => { closeCanvasWindow(event.sender) }))
   ipcMain.handle('whiteboard:canvas-appearance', event => safe(event, async () => { if (!isCanvasWindow(event.sender)) throw new Error('白板视频：窗口无效。'); const { appearance, accentColor, panelOpacity } = await loadSettings(undefined); return { appearance, accentColor, panelOpacity } }))
   ipcMain.handle('whiteboard:canvas-local-backgrounds', event => safe(event, async () => { if (!isCanvasWindow(event.sender)) throw new Error('白板视频：窗口无效。'); return listLocalBackgrounds() }))

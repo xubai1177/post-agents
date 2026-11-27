@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { platforms, type Platform } from '../../../shared/drafts'
-import { defaultImageStyle, type ImageStyle } from '../../../shared/image-styles'
+import { defaultImageStyle, type ImageStyle, type PlatformStyleSelections } from '../../../shared/image-styles'
 import { defaultTopicCount, minTopicCount, maxTopicCount } from '../../../shared/topics'
 import type { TopicBatch, TopicCandidate, TopicEvent, TopicWorkspace } from '../../../shared/topics'
 import type { WorkspaceIndex } from '../../../shared/workspace'
@@ -37,6 +37,7 @@ export function Topics({ onChoose, onStatus, onBatchBusy, active, availablePlatf
   const [batchFolderId, setBatchFolderId] = useState<string | null>(null)
   const [batchError, setBatchError] = useState('')
   const [images, setImages] = useState(false), [style, setStyle] = useState<ImageStyle>(defaultImageStyle)
+  const [stylesByPlatform, setStylesByPlatform] = useState<PlatformStyleSelections>({})
   const [batchBusy, setBatchBusy] = useState(false), [submitting, setSubmitting] = useState(false), [retrying, setRetrying] = useState('')
   const submitRef = useRef(false), batchButtonRef = useRef<HTMLButtonElement>(null), refreshId = useRef(0)
   const topicRuns = data.topicRuns ?? []
@@ -99,7 +100,7 @@ export function Topics({ onChoose, onStatus, onBatchBusy, active, availablePlatf
     if (!batchFolderId) { setBatchError('请选择保存文件夹。'); return }
     setBatchBusy(true); onBatchBusy(true); setBatchError('')
     try {
-      const result = await window.topicsApi.startBatch({ batchId: record.id, indexes: selected, platforms: chosen, imageStyle: style, generateImages: images, folderId: batchFolderId })
+      const result = await window.topicsApi.startBatch({ batchId: record.id, indexes: selected, platforms: chosen, imageStyle: style, imageStylesByPlatform: stylesByPlatform, generateImages: images, folderId: batchFolderId })
       if (!result.ok) { setBatchError(result.error); return }
       const { started, skipped, failed } = result.value
       setDrawer(null); setSelected([])
@@ -143,7 +144,7 @@ export function Topics({ onChoose, onStatus, onBatchBusy, active, availablePlatf
           {record ? <>
             <Card className="topic-card topic-candidates-card">
               <div className="topic-batch-heading"><div><Checkbox aria-label="全选本组选题" checked={selected.length === record.batch.candidates.length && selected.length > 0} onCheckedChange={checked => setSelected(checked === true ? record.batch.candidates.map((_, index) => index) : [])}/><strong>选题明细</strong><span>已选 {selected.length} 项</span></div>
-                <Button type="button" ref={batchButtonRef} className="primary-button" disabled={!selected.length || batchBusy} onClick={() => { setChosen([...availablePlatforms]); setImages(false); setStyle(defaultImageStyle); setBatchError(''); setBatchFolderId(folderIndex.generationFolderId ?? folderIndex.defaultFolderId ?? null); drawerOrigin.current = 'batch'; setDrawer('batch') }}>批量创建文章</Button>
+                <Button type="button" ref={batchButtonRef} className="primary-button" disabled={!selected.length || batchBusy} onClick={() => { setChosen([...availablePlatforms]); setImages(false); setStyle(defaultImageStyle); setStylesByPlatform({}); setBatchError(''); setBatchFolderId(folderIndex.generationFolderId ?? folderIndex.defaultFolderId ?? null); drawerOrigin.current = 'batch'; setDrawer('batch') }}>批量创建文章</Button>
               </div>
               <table className="topic-candidate-table-view" aria-label="选题明细"><colgroup><col className="topic-select-column"/><col/><col className="topic-status-column"/><col className="topic-action-column"/></colgroup><thead><tr><th scope="col"><span className="sr-only">选择</span></th><th scope="col">选题</th><th scope="col">状态</th><th scope="col">操作</th></tr></thead><tbody>{record.batch.candidates.map((candidate, index) => {
                 const task = data.tasks.find(item => item.batchId === record.id && item.index === index)
@@ -216,7 +217,7 @@ export function Topics({ onChoose, onStatus, onBatchBusy, active, availablePlatf
           </div>
         </form> : <div className="page-wrap narrow"><Button variant="link" size="xs" className="back-button" onClick={() => setDrawer(null)}><Icon name="back" size={17}/> 返回选题</Button>
           <Card asChild><form className="form-card" onSubmit={event => { event.preventDefault(); void createBatch() }}><fieldset className="settings-fields" disabled={batchBusy}>
-            <FolderPicker index={folderIndex} value={batchFolderId} onChange={setBatchFolderId} onIndexChange={onIndexChange} disabled={batchBusy}/><p className="muted">选题文件夹：{record?.batch.request.direction}</p><PublishSettings availablePlatforms={availablePlatforms} selected={chosen} onPlatformsChange={setChosen} generateImages={images} onImagesChange={setImages} imageStyle={style} onImageStyleChange={setStyle} disabled={batchBusy}/>
+            <FolderPicker index={folderIndex} value={batchFolderId} onChange={setBatchFolderId} onIndexChange={onIndexChange} disabled={batchBusy}/><p className="muted">选题文件夹：{record?.batch.request.direction}</p><PublishSettings availablePlatforms={availablePlatforms} selected={chosen} onPlatformsChange={setChosen} generateImages={images} onImagesChange={setImages} imageStyle={style} onImageStyleChange={setStyle} imageStylesByPlatform={stylesByPlatform} onImageStylesChange={setStylesByPlatform} disabled={batchBusy}/>
             {batchError && <p role="alert" className="error">{batchError}</p>}
             <div className="form-actions"><div className="creation-actions"><Button type="submit" className="primary-button" disabled={!chosen.length || batchBusy}>批量生成并保存文案</Button></div></div>
           </fieldset></form></Card></div>}

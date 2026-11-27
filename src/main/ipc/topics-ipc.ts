@@ -1,7 +1,7 @@
 import { startBatchArticles, taskWithArticleRun } from '../features/topics/batch-articles'
 import { articleQueue, onArticleQueueChanged } from '../composition'
 import { assertAvailableArticleTitle, changeWorkspaceIndex, ensureWorkspaceIndex } from '../features/workspace/workspace-index'
-import { isImageStyle } from '../../shared/image-styles'
+import { isImageStyle, isPlatformStyleSelections } from '../../shared/image-styles'
 import { ipcMain, shell, type WebContents } from 'electron'
 import { platforms } from '../../shared/drafts'
 import { defaultTopicCount, isTopicCount } from '../../shared/topics'
@@ -38,11 +38,11 @@ export function registerTopics(): void {
   ipcMain.handle('topics:start-batch', (event, value: unknown) => respond(event, async () => {
     if (!value || typeof value !== 'object') throw new Error('选题操作：批量创建参数无效。')
     const input = value as Record<string, unknown>
-    if (typeof input.batchId !== 'string' || !/^[a-zA-Z0-9-]{1,80}$/.test(input.batchId) || !Array.isArray(input.indexes) || !input.indexes.length || input.indexes.length > 100 || !input.indexes.every(i => Number.isInteger(i) && i >= 0 && i < 100) || new Set(input.indexes).size !== input.indexes.length || !Array.isArray(input.platforms) || !input.platforms.length || !input.platforms.every(p => platforms.includes(p)) || new Set(input.platforms).size !== input.platforms.length || !isImageStyle(input.imageStyle) || typeof input.generateImages !== 'boolean' || typeof input.folderId !== 'string' || !/^[a-zA-Z0-9-]{1,80}$/.test(input.folderId)) throw new Error('选题操作：批量创建参数无效。')
+    if (typeof input.batchId !== 'string' || !/^[a-zA-Z0-9-]{1,80}$/.test(input.batchId) || !Array.isArray(input.indexes) || !input.indexes.length || input.indexes.length > 100 || !input.indexes.every(i => Number.isInteger(i) && i >= 0 && i < 100) || new Set(input.indexes).size !== input.indexes.length || !Array.isArray(input.platforms) || !input.platforms.length || !input.platforms.every(p => platforms.includes(p)) || new Set(input.platforms).size !== input.platforms.length || !isImageStyle(input.imageStyle) || (input.imageStylesByPlatform !== undefined && !isPlatformStyleSelections(input.imageStylesByPlatform)) || typeof input.generateImages !== 'boolean' || typeof input.folderId !== 'string' || !/^[a-zA-Z0-9-]{1,80}$/.test(input.folderId)) throw new Error('选题操作：批量创建参数无效。')
     const root = await getDraftsDirectory()
     await topicQueue.load(root)
     track(event.sender)
-    return await startBatchArticles(root, { batchId: input.batchId, indexes: input.indexes, platforms: input.platforms, imageStyle: input.imageStyle, generateImages: input.generateImages, folderId: input.folderId }, { update: updateTopicWorkspace, loadRuns: dir => articleQueue.load(dir), start: (dir, options) => articleQueue.start(dir, options), assertTitle: assertAvailableArticleTitle,
+    return await startBatchArticles(root, { batchId: input.batchId, indexes: input.indexes, platforms: input.platforms, imageStyle: input.imageStyle, ...(isPlatformStyleSelections(input.imageStylesByPlatform) && { imageStylesByPlatform: input.imageStylesByPlatform }), generateImages: input.generateImages, folderId: input.folderId }, { update: updateTopicWorkspace, loadRuns: dir => articleQueue.load(dir), start: (dir, options) => articleQueue.start(dir, options), assertTitle: assertAvailableArticleTitle,
       ensureFolder: async (dir, batchId, parentId, name) => { const index = await changeWorkspaceIndex(dir, { type: 'ensureTopicFolder', batchId, parentId, name }); const id = index.topicFolders?.[batchId]; if (!id) throw new Error('选题操作：无法创建选题文件夹。'); return id },
       assignFolder: async (dir, id, folderId) => { try { await changeWorkspaceIndex(dir, { type: 'moveDraft', draftId: id, folderId }) } catch (error) { const fallback = await ensureWorkspaceIndex(dir); if (fallback.defaultFolderId) await changeWorkspaceIndex(dir, { type: 'moveDraft', draftId: id, folderId: fallback.defaultFolderId }); throw error } } })
   }))

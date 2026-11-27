@@ -159,7 +159,7 @@ export function ImageGallery({ draft, platform, document, busy, imageStyle, onSt
             <Button variant="ghost" size="icon-sm" aria-label="关闭" disabled={submitting}
               onClick={() => setStyleDialogOpen(false)}><Icon name="close"/></Button>
           </div>
-          <ImageStylePicker value={style} onChange={setStyle} disabled={submitting}/>
+          <ImageStylePicker platform={platform} reloadKey={styleDialogOpen} value={style} onChange={setStyle} disabled={submitting}/>
           {dialogMessage && <p role="status">{dialogMessage}</p>}
           <div className="style-dialog-actions">
             <Button variant="outline" disabled={submitting} onClick={() => setStyleDialogOpen(false)}>取消</Button>

@@ -2,9 +2,9 @@ import { randomUUID } from 'node:crypto'
 import type { Draft, StartArticleRequest, ArticleRun } from '../../../shared/drafts'
 import type { TopicWorkspace, TopicTask } from '../../../shared/topics'
 import type { Platform } from '../../../shared/drafts'
-import type { ImageStyle } from '../../../shared/image-styles'
+import type { ImageStyle, PlatformStyleSelections } from '../../../shared/image-styles'
 
-type Options = { batchId: string; indexes: number[]; platforms: Platform[]; imageStyle: ImageStyle; generateImages: boolean; folderId: string }
+type Options = { batchId: string; indexes: number[]; platforms: Platform[]; imageStyle: ImageStyle; imageStylesByPlatform?: PlatformStyleSelections; generateImages: boolean; folderId: string }
 type Dependencies = {
   update: (root: string, change: (data: TopicWorkspace) => TopicWorkspace) => Promise<TopicWorkspace>
   loadRuns: (root: string) => Promise<ArticleRun[]>
@@ -48,7 +48,7 @@ export async function startBatchArticles(root: string, options: Options, deps: D
     try {
       if (!item.task.title.trim() || item.task.title.length > 100 || item.angle.length > 2000 || item.audience.length > 500) throw new Error('文章操作：选题内容超过文章生成长度限制。')
       await deps.assertTitle(root, item.task.title)
-      const draft = await deps.start(root, { request: { title: item.task.title, angle: item.angle, audience: item.audience, platforms: options.platforms, research: 'online' }, imageStyle: options.imageStyle, generateImages: options.generateImages, folderId })
+      const draft = await deps.start(root, { request: { title: item.task.title, angle: item.angle, audience: item.audience, platforms: options.platforms, research: 'online' }, imageStyle: options.imageStyle, imageStylesByPlatform: options.imageStylesByPlatform, generateImages: options.generateImages, folderId })
       started++
       let message: string | undefined
       try { await deps.assignFolder(root, draft.id, folderId) }

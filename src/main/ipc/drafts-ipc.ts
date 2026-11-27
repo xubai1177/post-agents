@@ -10,7 +10,7 @@ import { ResearchUnavailableError } from '../errors'
 import { respond } from './security'
 import { notifyGeneration } from '../infrastructure/notifications'
 import type { GenerationProgress } from '../../shared/research'
-import { isImageStyle } from '../../shared/image-styles'
+import { isImageStyle, isPlatformStyleSelections } from '../../shared/image-styles'
 import { changeWorkspaceIndex, ensureWorkspaceIndex } from '../features/workspace/workspace-index'
 
 const articleListeners = new Set<WebContents>()
@@ -54,7 +54,7 @@ export function registerDrafts(): void {
   ipcMain.handle('drafts:start-article', (event, value: unknown) => handle(event, async () => {
     if (!value || typeof value !== 'object') throw new Error('文章操作：创建参数无效。')
     const input = value as Record<string, unknown>
-    if (!validateRequest(input.request) || !isImageStyle(input.imageStyle) || typeof input.generateImages !== 'boolean' || !(input.folderId === null || (typeof input.folderId === 'string' && /^[a-zA-Z0-9-]{1,80}$/.test(input.folderId)))) throw new Error('文章操作：创建参数无效。')
+    if (!validateRequest(input.request) || !isImageStyle(input.imageStyle) || (input.imageStylesByPlatform !== undefined && !isPlatformStyleSelections(input.imageStylesByPlatform)) || typeof input.generateImages !== 'boolean' || !(input.folderId === null || (typeof input.folderId === 'string' && /^[a-zA-Z0-9-]{1,80}$/.test(input.folderId)))) throw new Error('文章操作：创建参数无效。')
     const root = await getDraftsDirectory()
     if (!root) throw new Error('请先在设置中选择草稿目录。')
     const workspace = await ensureWorkspaceIndex(root)
@@ -62,7 +62,7 @@ export function registerDrafts(): void {
     if (!folderId || !workspace.folders.some(folder => folder.id === folderId)) throw new Error('文章操作：保存文件夹已不存在，请重新选择。')
     await assertAvailableArticleTitle(root, input.request.title)
     trackArticleListener(event.sender)
-    const draft = await articleQueue.start(root, { request: input.request, imageStyle: input.imageStyle, generateImages: input.generateImages, folderId })
+    const draft = await articleQueue.start(root, { request: input.request, imageStyle: input.imageStyle, ...(isPlatformStyleSelections(input.imageStylesByPlatform) && { imageStylesByPlatform: input.imageStylesByPlatform }), generateImages: input.generateImages, folderId })
     let warning: string | undefined
     try { await changeWorkspaceIndex(root, { type: 'moveDraft', draftId: draft.id, folderId }) }
     catch {

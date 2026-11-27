@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, shell, type WebContents } from 'electron'
 import { platforms, type Platform } from '../../shared/drafts'
-import { isImageStyle } from '../../shared/image-styles'
+import { isImageStyle, isPlatformStyleSelections } from '../../shared/image-styles'
 import type { ArticleImagesRequest, ImageDownloadRequest, ImageRequest, ImageGenerationResult } from '../../shared/images'
 import { getDraftsDirectory } from '../features/settings/settings'
 import { downloadImageToDirectory, downloadImages, isImageFilename, listImages, removeImage } from '../features/images/image-store'
@@ -24,10 +24,10 @@ function validRequest(value: unknown): value is ImageRequest {
 function validArticleRequest(value: unknown): value is ArticleImagesRequest {
   if (!value || typeof value !== 'object') return false
   const data = value as Record<string, unknown>
-  return typeof data.id === 'string' && data.id.length > 0 && data.id.length <= 200 && typeof data.runId === 'string' && /^[a-zA-Z0-9-]{1,80}$/.test(data.runId) && isImageStyle(data.style) && Array.isArray(data.platforms) && data.platforms.length > 0 && data.platforms.length <= platforms.length && data.platforms.every(isPlatform) && new Set(data.platforms).size === data.platforms.length
+  return typeof data.id === 'string' && data.id.length > 0 && data.id.length <= 200 && typeof data.runId === 'string' && /^[a-zA-Z0-9-]{1,80}$/.test(data.runId) && isImageStyle(data.style) && (data.imageStylesByPlatform === undefined || isPlatformStyleSelections(data.imageStylesByPlatform)) && Array.isArray(data.platforms) && data.platforms.length > 0 && data.platforms.length <= platforms.length && data.platforms.every(isPlatform) && new Set(data.platforms).size === data.platforms.length
 }
 function safeMessage(error: unknown): string {
-  if (error instanceof Error && ['请先在设置中选择草稿目录。', '请先配置图片模型及图片服务。', '请先配置文案模型，用于策划配图。', '文案已发生变化，请重新读取并保存后再生成。', '正在为此平台生成图片，请稍候。', '配图方案生成失败：文案模型请求失败，请检查文案模型服务。', '配图方案生成失败：文案模型返回的配图方案格式或数量不符合要求，请重试。'].includes(error.message)) return error.message
+  if (error instanceof Error && ['请先在设置中选择草稿目录。', '请先配置图片模型及图片服务。', '请先配置文案模型，用于策划配图。', '文案已发生变化，请重新读取并保存后再生成。', '正在为此平台生成图片，请稍候。', '所选图片风格已不存在，请重新选择。', '配图方案生成失败：文案模型请求失败，请检查文案模型服务。', '配图方案生成失败：文案模型返回的配图方案格式或数量不符合要求，请重试。'].includes(error.message)) return error.message
   return '图片操作失败，请检查模型服务、文件和网络。'
 }
 function safe<T>(event: Electron.IpcMainInvokeEvent, work: () => Promise<T>) { return respond(event, async () => { try { return await work() } catch (error) { throw new Error(`图片操作：${safeMessage(error)}`) } }) }

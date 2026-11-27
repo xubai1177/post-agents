@@ -1,0 +1,32 @@
+const { app, BrowserWindow } = require('electron')
+const assert = require('node:assert/strict')
+const { randomUUID } = require('node:crypto')
+app.on('window-all-closed', () => {})
+app.whenReady().then(async () => {
+  try {
+    const api = require(process.argv[2])
+    api.registerWhiteboard(); await api.openCanvasWindow(process.argv[3])
+    const window = BrowserWindow.getAllWindows().find(item => api.isCanvasWindow(item.webContents))
+    assert.ok(window)
+    const invoke = script => window.webContents.executeJavaScript(script, true)
+    const data = { version: 1, name: '路由刷新测试', panels: [{ id: randomUUID(), name: '画布 1', items: [], background: { color: '#ffffff', image: null, name: '', mode: 'cover', scale: 1, x: .5, y: .5 }, ratio: 'landscape' }], assets: [], activePanel: 0, pen: 'pencil' }
+    const saved = await invoke(`window.canvasApi.saveProject(null, null, ${JSON.stringify(data)})`)
+    assert.equal(saved.ok, true)
+    const waitFor = selector => invoke(`new Promise((resolve, reject) => { const check = () => { const node = document.querySelector(${JSON.stringify(selector)}); if (node) { observer.disconnect(); clearTimeout(timer); resolve(node.textContent) } }; const observer = new MutationObserver(check); observer.observe(document, {childList:true,subtree:true}); const timer = setTimeout(() => {observer.disconnect();reject(new Error('等待界面超时'))},10000); check() })`)
+    async function reload() { const loaded = new Promise(resolve => window.webContents.once('did-finish-load', resolve)); window.webContents.reload(); await loaded }
+    await reload()
+    assert.match(await waitFor('.wb-library-card'), /路由刷新测试/)
+    await invoke("document.querySelector('.wb-library-card').click()")
+    assert.equal(await waitFor('button[title="修改工程名称"]'), data.name)
+    assert.equal(await invoke('window.location.hash'), `#whiteboard-canvas?project=${saved.value.id}`)
+    await reload()
+    assert.equal(await waitFor('button[title="修改工程名称"]'), data.name)
+    assert.equal(await invoke('window.location.hash'), `#whiteboard-canvas?project=${saved.value.id}`)
+    await invoke("Array.from(document.querySelectorAll('button')).find(button => button.textContent.includes('工程列表')).click()")
+    await waitFor('.wb-library-card')
+    assert.equal(await invoke('window.location.hash'), '#whiteboard-canvas')
+    await reload()
+    assert.match(await waitFor('.wb-library-card'), /路由刷新测试/)
+    window.destroy(); console.log('画布工程路由刷新后恢复对应工程通过。'); app.exit(0)
+  } catch (error) { console.error(error); app.exit(1) }
+})

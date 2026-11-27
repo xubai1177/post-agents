@@ -1,10 +1,10 @@
 import type { Platform } from './drafts'
-import type { ImageStyle } from './image-styles'
+import type { ImageStyle, PlatformStyleSelections } from './image-styles'
 import type { Result } from './settings'
 export interface DraftImage { name: string; dataUrl: string }
 export interface ImageRequest { id: string; platform: Platform; version: string; count?: number; style?: ImageStyle }
 export interface ImageGenerationResult { images: DraftImage[]; failures: { index: number; error: string }[] }
-export interface ArticleImagesRequest { id: string; platforms: Platform[]; style: ImageStyle; runId: string }
+export interface ArticleImagesRequest { id: string; platforms: Platform[]; style: ImageStyle; imageStylesByPlatform?: PlatformStyleSelections; runId: string }
 export interface ArticleImagesProgress { runId: string; message: string }
 export type ImageProgress = { phase: 'planning' } | { phase: 'generating'; current: number; total: number; completed: number }
 export interface ImageJob { progress?: ImageProgress; id: string; platform: Platform; status: 'queued' | 'running' | 'done' | 'failed'; message?: string }

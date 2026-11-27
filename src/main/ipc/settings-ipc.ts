@@ -1,10 +1,27 @@
-import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { platforms } from '../../shared/drafts'
+import { ImageSizeRequestError, requestImage } from '../infrastructure/image-provider'
+import { coverSizeForStyle } from '../features/images/cover-size'
+import { buildStyleTestPrompt } from '../features/images/image-prompts'
+import { BrowserWindow, dialog, ipcMain, nativeImage, shell } from 'electron'
 import { stat } from 'node:fs/promises'
-import { getCustomImageApiKey, getRuntimeSettings, loadSettings, recordDirectorySelection, savePlatformConfig, saveSettings } from '../features/settings/settings'
+import { getCustomImageApiKey, getImageSettings, getRuntimeSettings, loadSettings, recordDirectorySelection, saveImageStylePreview, savePlatformConfig, saveSettings } from '../features/settings/settings'
 import { respond } from './security'
 import { fetchModelList } from '../infrastructure/model-list'
 
 export function registerSettings(): void {
+  ipcMain.handle('settings:test-image-style', (event, input: unknown) => respond(event, async () => {
+    if (!input || typeof input !== 'object' || !('platform' in input) || typeof input.platform !== 'string' || !platforms.some(p => p === input.platform) || !('prompt' in input) || typeof input.prompt !== 'string' || !input.prompt.trim() || input.prompt.length > 4000) throw new Error('图片风格测试：参数无效。')
+    const config = await getImageSettings()
+    if (!config.apiUrl || !config.apiKey || !config.model) throw new Error('图片风格测试：请先配置图片模型及服务。')
+    let bytes: Buffer
+    try { bytes = await requestImage(config, buildStyleTestPrompt(input.platform, input.prompt), coverSizeForStyle(config, input.prompt)) }
+    catch (error) { if (error instanceof ImageSizeRequestError) throw new Error(`图片风格测试：${error.message}`); throw error }
+    const image = nativeImage.createFromBuffer(bytes)
+    if (image.isEmpty()) throw new Error('图片风格测试：图片服务返回了无效图片。')
+    const preview = image.resize({ width: 360 }).toJPEG(80).toString('base64')
+    if (preview.length > 399900) throw new Error('图片风格测试：生成的预览图片过大。')
+    return `data:image/jpeg;base64,${preview}`
+  }))
   ipcMain.handle('settings:open-platform', (event, name: unknown) => respond(event, async () => {
     if (typeof name !== 'string' || name.length > 50) throw new Error('invalid platform')
     const settings = await loadSettings(undefined)
@@ -33,6 +50,7 @@ export function registerSettings(): void {
     recordDirectorySelection(event.sender.id, selected)
     return selected
   }))
+  ipcMain.handle('settings:save-image-style-preview', (event, input: unknown) => respond(event, () => saveImageStylePreview(input)))
   ipcMain.handle('settings:save-platform-config', (event, config: unknown) => respond(event, () => savePlatformConfig(config)))
   ipcMain.handle('settings:save', (event, update: unknown) => respond(event, () => saveSettings(event.sender.id, update)))
 }

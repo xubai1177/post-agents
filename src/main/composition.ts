@@ -61,7 +61,7 @@ export async function createArticleImages(request: ArticleImagesRequest, onProgr
   const root = textConfig.draftsDirectory
   if (!root || imageConfig.draftsDirectory !== root) throw new Error('请先确认当前工作空间。')
   return generateCreatedArticleImages({ id: request.id, platforms: request.platforms }, request.style, {
-    onProgress,
+    onProgress, imageStylesByPlatform: request.imageStylesByPlatform,
     onComplete: (count, partial) => notifyGeneration({ kind: 'images', count, partial }),
     read: async (id, platform) => { try { return { ok: true as const, value: await readDraft(root, id, platform) } } catch { return { ok: false as const, error: '无法读取文章，请检查工作空间。' } } },
     generate: async (imageRequest, progress) => { try { return { ok: true as const, value: await generateImageSet(imageRequest, { getImageSettings: async () => imageConfig, getRuntimeSettings: async () => textConfig, readDraft, createTextModel, generateImages, requestImage }, progress) } } catch { return { ok: false as const, error: '无法生成配图，请检查图片和文案模型服务。' } } }
@@ -96,7 +96,7 @@ export const articleQueue = new ArticleQueue({
   images: async (root, draft, run, onProgress) => {
     const textConfig = await getRuntimeSettings(), imageConfig = await getImageSettings()
     return generateCreatedArticleImages(draft, run.imageStyle, {
-      onProgress,
+      onProgress, imageStylesByPlatform: run.imageStylesByPlatform,
       onComplete: (count, partial) => notifyGeneration({ kind: 'images', count, partial }),
       read: async (id, platform) => { try { return { ok: true as const, value: await readDraft(root, id, platform) } } catch { return { ok: false as const, error: '无法读取文章，请检查工作空间。' } } },
       generate: async (request, progress) => { try { return { ok: true as const, value: await generateImageSet(request, { getImageSettings: async () => ({ ...imageConfig, draftsDirectory: root }), getRuntimeSettings: async () => ({ ...textConfig, draftsDirectory: root }), readDraft, createTextModel, generateImages, requestImage }, progress) } } catch { return { ok: false as const, error: '无法生成配图，请检查图片和文案模型服务。' } } }
